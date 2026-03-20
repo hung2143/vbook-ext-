@@ -4,7 +4,12 @@ function execute(url, page) {
     // 1 item debug, giúp app không hiện "Không có dữ liệu".
     try {
         if (!page) page = '1';
-        var listUrl = url + page;
+
+        // Đường /stories trên app của anh đang trả về HTML
+        // không chứa danh sách truyện. Để tránh bị chặn,
+        // ta chuyển sang lấy dữ liệu ngay từ trang chủ.
+        var listUrl = 'https://trangtruyen.site/';
+
         var response = fetch(listUrl, {
             headers: {
                 'user-agent': UserAgent.chrome(),
