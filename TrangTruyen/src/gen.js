@@ -1,124 +1,152 @@
-function execute(url, page) {
-    // Bọc toàn bộ logic trong try để nếu có lỗi
-    // (do DOM khác, regex sai, v.v.) thì vẫn trả về
-    // 1 item debug, giúp app không hiện "Không có dữ liệu".
-    try {
-        if (!page) page = '1';
+function normalizeUrl(link) {
+    if (!link) return "";
+    if (link.indexOf("//") === 0) return "https:" + link;
+    if (link.indexOf("http") !== 0) return "https://trangtruyen.site" + link;
+    return link;
+}
 
-        // Đường /stories trên app của anh đang trả về HTML
-        // không chứa danh sách truyện. Để tránh bị chặn,
-        // ta chuyển sang lấy dữ liệu ngay từ trang chủ.
-        var listUrl = 'https://trangtruyen.site/';
+function safeDecodeSlug(link) {
+    try {
+        var slug = (link || "").split("/");
+        slug = slug[slug.length - 1] || "";
+        return decodeURIComponent(slug.replace(/-/g, " "));
+    } catch (e) {
+        return (link || "").replace(/-/g, " ");
+    }
+}
+
+function pickCoverFromNode(node) {
+    if (!node) return "";
+    var img = node.select("img").first();
+    if (!img) return "";
+
+    var c = img.attr("data-src") || img.attr("src") || "";
+    if (!c) {
+        var srcset = img.attr("srcset") || "";
+        if (srcset) {
+            var first = srcset.split(",")[0];
+            if (first) c = first.trim().split(" ")[0] || "";
+        }
+    }
+    return normalizeUrl(c);
+}
+
+function execute(url, page) {
+    try {
+        if (!page) page = "1";
+        var pageNum = parseInt(page, 10);
+        if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
+
+        var listUrl = url || "https://trangtruyen.site/stories?page=";
+        if (listUrl.indexOf("{page}") !== -1) {
+            listUrl = listUrl.replace("{page}", pageNum);
+        } else if (listUrl.indexOf("page=") >= 0) {
+            listUrl = listUrl.replace(/page=\d+/i, "page=" + pageNum);
+        } else {
+            listUrl += pageNum;
+        }
 
         var response = fetch(listUrl, {
             headers: {
-                'user-agent': UserAgent.chrome(),
-                'referer': 'https://trangtruyen.site/'
+                "user-agent": UserAgent.chrome(),
+                "referer": "https://trangtruyen.site/"
             }
         });
         if (!response.ok) {
             return Response.success([{
-                name: 'TrangTruyen: fetch lỗi',
-                link: 'https://trangtruyen.site/stories',
-                cover: '',
-                description: 'Không gọi được ' + listUrl,
-                host: 'https://trangtruyen.site'
+                name: "TrangTruyen: fetch lỗi",
+                link: "https://trangtruyen.site/stories",
+                cover: "",
+                description: "HTTP " + response.status + " | " + listUrl,
+                host: "https://trangtruyen.site"
             }], null);
         }
 
-        var doc = response.html('utf-8');
+        var doc = response.html("utf-8");
         if (!doc) {
             return Response.success([{
-                name: 'TrangTruyen: doc trống',
-                link: 'https://trangtruyen.site/stories',
-                cover: '',
-                description: 'Không parse được HTML',
-                host: 'https://trangtruyen.site'
+                name: "TrangTruyen: doc trống",
+                link: "https://trangtruyen.site/stories",
+                cover: "",
+                description: "Không parse được HTML",
+                host: "https://trangtruyen.site"
             }], null);
         }
 
         var data = [];
-
-        // Trên trang /stories, các truyện đều có link dạng
-        // https://trangtruyen.site/stories/slug-...
-        // Dùng contains (*=) thay vì starts-with (^=) để tránh
-        // khác biệt nhỏ về URL giữa các phiên bản (http/https, tham số...).
-        var items = doc.select("a[href*='/stories/']");
-
         var seen = {};
-        items.forEach(function (a) {
-            var link = a.attr('href');
-            if (!link) return;
-            if (!link.startsWith('http')) link = 'https://trangtruyen.site' + link;
-            if (seen[link]) return;
+
+        var cards = doc.select("article, .story-card, .grid a[href*='/stories/'], a[href*='/stories/']");
+        for (var i = 0; i < cards.size(); i++) {
+            var node = cards.get(i);
+            var a = node;
+            if (a.tagName && a.tagName().toLowerCase() !== "a") {
+                a = node.select("a[href*='/stories/']").first();
+            }
+            if (!a) continue;
+
+            var link = normalizeUrl(a.attr("href"));
+            if (!link) continue;
+            if (link.indexOf("/stories/") < 0) continue;
+            if (seen[link]) continue;
+
+            var name = (a.text() || a.attr("title") || "").replace(/\s+/g, " ").trim();
+            if (!name) name = safeDecodeSlug(link);
+
             seen[link] = true;
-
-            var name = a.text();
-            if (!name) name = a.attr('title');
-
             data.push({
                 name: name,
                 link: link,
-                cover: '',
-                description: '',
-                host: 'https://trangtruyen.site'
+                cover: pickCoverFromNode(node),
+                description: "",
+                host: "https://trangtruyen.site"
             });
-        });
+        }
 
-        // Nếu selector không bắt được gì (do DOM khác bản desktop),
-        // fallback dùng regex quét toàn bộ HTML để lấy link truyện
-        // cả dạng tuyệt đối lẫn tương đối.
         if (data.length === 0) {
-            var html = doc.html();
-            // Ghi log một phần HTML để xem server trả gì trên app
-            try {
-                var snippet = html.substring(0, 400);
-                Console.log('TrangTruyen /stories HTML snippet: ' + snippet);
-            } catch (ignore) {}
+            var html = doc.html() || "";
             var regex = /(https:\/\/trangtruyen\.site\/stories\/[^"'>\s]+|\/stories\/[^"'>\s]+)/g;
             var m;
             while ((m = regex.exec(html)) !== null) {
-                var link2 = m[0];
-                if (!link2.startsWith('http')) link2 = 'https://trangtruyen.site' + link2;
-                if (seen[link2]) continue;
+                var link2 = normalizeUrl(m[0]);
+                if (!link2 || seen[link2]) continue;
                 seen[link2] = true;
 
-                var slug = link2.split('/').pop();
-                var name2 = decodeURIComponent(slug.replace(/-/g, ' '));
-
                 data.push({
-                    name: name2,
+                    name: safeDecodeSlug(link2),
                     link: link2,
-                    cover: '',
-                    description: '',
-                    host: 'https://trangtruyen.site'
+                    cover: "",
+                    description: "",
+                    host: "https://trangtruyen.site"
                 });
             }
 
-            // Nếu vẫn không có gì, trả về 1 dòng debug để biết plugin chạy.
             if (data.length === 0) {
                 data.push({
-                    name: 'TrangTruyen: không tìm thấy truyện',
-                    link: 'https://trangtruyen.site/stories',
-                    cover: '',
-                    description: 'HTML length: ' + html.length + ' | has "/stories/": ' + (html.indexOf('/stories/') !== -1),
-                    host: 'https://trangtruyen.site'
+                    name: "TrangTruyen: không tìm thấy truyện",
+                    link: "https://trangtruyen.site/stories",
+                    cover: "",
+                    description: "HTML length: " + html.length + " | URL: " + listUrl,
+                    host: "https://trangtruyen.site"
                 });
             }
         }
 
         var next = null;
+        var htmlLower = (doc.html() || "").toLowerCase();
+        var nextQuery = "page=" + (pageNum + 1);
+        if (htmlLower.indexOf(nextQuery) !== -1 && data.length > 0) {
+            next = (pageNum + 1).toString();
+        }
+
         return Response.success(data, next);
     } catch (e) {
-        // Fallback cuối cùng: luôn trả về 1 item tĩnh.
-        return Response.success([
-            {
-                name: 'TrangTruyen: lỗi script',
-                link: 'https://trangtruyen.site/stories',
-                cover: '',
-                description: 'Plugin gặp lỗi, cần xem lại code.',
-                host: 'https://trangtruyen.site'
-            }
-        ], null);
+        return Response.success([{
+            name: "TrangTruyen: lỗi script",
+            link: "https://trangtruyen.site/stories",
+            cover: "",
+            description: e ? e.toString() : "Lỗi không xác định",
+            host: "https://trangtruyen.site"
+        }], null);
     }
 }
