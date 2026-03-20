@@ -363,7 +363,12 @@ function execute(url) {
                 "referer": "https://trangtruyen.site/"
             }
         });
-        if (!response.ok) return null;
+        if (!response.ok) {
+            if (apiRes && apiRes.requireLogin) {
+                return Response.success("<p>Nội dung chương yêu cầu đăng nhập. Hãy đăng nhập lại trong app rồi tải lại chương.</p>");
+            }
+            return Response.success("<p>Không tải được nội dung chương từ nguồn. Bạn có thể thử bấm 'Xem trang nguồn' rồi tải lại.</p>");
+        }
 
         var doc = response.html("utf-8");
         var selectors = [
@@ -391,11 +396,15 @@ function execute(url) {
 
         var text = doc.text() || "";
         if (/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(text) || (apiRes && apiRes.requireLogin && (!html || html.length < 80))) {
-            return null;
+            return Response.success("<p>Nội dung chương yêu cầu đăng nhập. Hãy đăng nhập lại trong app rồi tải lại chương.</p>");
+        }
+
+        if (!html || html.length < 20) {
+            return Response.success("<p>Không tải được nội dung chương từ nguồn. Bạn có thể thử bấm 'Xem trang nguồn' rồi tải lại.</p>");
         }
 
         return Response.success(html);
     } catch (e) {
-        return null;
+        return Response.success("<p>Không tải được nội dung chương do lỗi tạm thời. Hãy thử tải lại hoặc mở trang nguồn.</p>");
     }
 }
