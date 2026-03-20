@@ -33,11 +33,26 @@ function execute(key, page) {
             name = decodeURIComponent(slug.replace(/-/g, ' '));
         }
 
+        var cover = "";
+        var desc = "";
+        var cur = e;
+        for (var i = 0; i < 3 && cur; i++) {
+            var img = cur.select("img").first();
+            if (!img && cur.parent()) img = cur.parent().select("img").first();
+            if (img && !cover) {
+                cover = img.attr('data-src') || img.attr('src');
+                if (cover && !cover.startsWith('http')) cover = 'https://khotruyenchu.sbs' + cover;
+            }
+            var p = cur.select(".excerpt, .entry-summary, .jeg_post_excerpt, p").first();
+            if (p && !desc) desc = p.text();
+            cur = cur.parent();
+        }
+
         data.push({
             name: name,
             link: link,
-            cover: "",
-            description: "",
+            cover: cover,
+            description: desc,
             host: "https://khotruyenchu.sbs"
         });
     });

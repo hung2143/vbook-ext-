@@ -56,11 +56,27 @@ function execute(url, page) {
                 name = decodeURIComponent(slug.replace(/-/g, ' '));
             }
 
+            // Lấy cover và mô tả gần anchor (tìm lên tối đa 3 cấp).
+            var cover = "";
+            var desc = "";
+            var cur = a;
+            for (var i = 0; i < 3 && cur; i++) {
+                var img = cur.select("img").first();
+                if (!img && cur.parent()) img = cur.parent().select("img").first();
+                if (img && !cover) {
+                    cover = img.attr('data-src') || img.attr('src');
+                    if (cover && !cover.startsWith('http')) cover = 'https://khotruyenchu.sbs' + cover;
+                }
+                var p = cur.select(".excerpt, .entry-summary, .jeg_post_excerpt, p").first();
+                if (p && !desc) desc = p.text();
+                cur = cur.parent();
+            }
+
             data.push({
                 name: name,
                 link: link,
-                cover: "",
-                description: "",
+                cover: cover,
+                description: desc,
                 host: "https://khotruyenchu.sbs"
             });
         });
@@ -91,6 +107,10 @@ function execute(url, page) {
         var nextPageNum = pageNum + 1;
         var expectedNext = "/page/" + nextPageNum + "/";
         var hasNext = doc.select("a[href*='" + expectedNext + "']").size() > 0;
+        if (!hasNext) {
+            // Fallback: tìm nút phân trang có rel="next" hoặc text "Sau".
+            hasNext = doc.select("a[rel='next'], a:matchesOwn((?i)sau|next)").size() > 0;
+        }
         if (hasNext && data.length > 0) next = nextPageNum.toString();
 
         if (data.length === 0) {

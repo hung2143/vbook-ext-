@@ -16,7 +16,7 @@ function execute(url) {
     if (!response.ok) return null;
 
     var doc = response.html("utf-8");
-    var content = doc.select(".entry-content, article .entry-content, .post-content").first();
+    var content = doc.select(".entry-content, article .entry-content, .post-content, .content-inner").first();
     var html = content ? content.html() : doc.html();
     html = cleanHtml(html);
 
