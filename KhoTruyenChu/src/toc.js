@@ -1,24 +1,46 @@
+function normalizeUrl(href, host) {
+    if (!href) return "";
+    if (!href.startsWith("http")) return host + href;
+    return href;
+}
+
+function chapterNoFrom(name, href) {
+    var text = (name || "").toLowerCase();
+    var m = text.match(/chuong\s*0*(\d+)/i);
+    if (m) return parseInt(m[1], 10);
+
+    var url = (href || "").toLowerCase();
+    var m2 = url.match(/\/chuong-0*(\d+)[-\/]/i);
+    if (m2) return parseInt(m2[1], 10);
+
+    return -1;
+}
+
 function collectChapters(doc, seen, host) {
     var list = [];
     var nodes = doc.select("a[href*='/chuong']");
     for (var i = 0; i < nodes.size(); i++) {
         var a = nodes.get(i);
-        var href = a.attr('href');
+        var href = normalizeUrl(a.attr("href"), host);
         if (!href) continue;
-        if (!href.startsWith('http')) href = host + href;
+
+        var name = a.text();
+        if (!name) name = a.attr("title");
+        name = (name || "").replace(/\s+/g, " ").trim();
+        if (!name) continue;
+
+        // Chỉ lấy chapter thật, bỏ các link điều hướng như "Chương Mới Nhất".
+        var no = chapterNoFrom(name, href);
+        if (no < 1) continue;
+
         if (seen[href]) continue;
         seen[href] = true;
 
-        var name = a.text();
-        if (!name) name = a.attr('title');
-        if (!name) {
-            var slug = href.split('/').filter(Boolean).pop();
-            name = decodeURIComponent(slug.replace(/-/g, ' '));
-        }
         list.push({
             name: name,
             url: href,
-            host: host
+            host: host,
+            __no: no
         });
     }
     return list;
@@ -75,6 +97,16 @@ function execute(url) {
 
         // Nếu trang phân trang không còn chương mới thì có thể đã tới cuối.
         if (data.length === before && i > maxPage) break;
+    }
+
+    // Sắp xếp từ Chương 1 tới chương cuối để app hiển thị đúng thứ tự đọc.
+    data.sort(function (a, b) {
+        if (a.__no === b.__no) return a.url > b.url ? 1 : -1;
+        return a.__no - b.__no;
+    });
+
+    for (var x = 0; x < data.length; x++) {
+        delete data[x].__no;
     }
 
     return Response.success(data);
