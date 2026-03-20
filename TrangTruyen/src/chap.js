@@ -7,6 +7,36 @@ function cleanHtml(html) {
     return html;
 }
 
+function htmlToText(html) {
+    if (!html) return "";
+    return String(html)
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<\/p\s*>/gi, "\n")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function isReadableHtml(html) {
+    var text = htmlToText(html);
+    if (!text || text.length < 30) return false;
+    if (/^(đăng nhập|login|sign in)$/i.test(text)) return false;
+    return true;
+}
+
+function plainTextToHtml(text) {
+    if (!text) return "";
+    var lines = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split(/\n+/g);
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+        var line = (lines[i] || "").trim();
+        if (!line) continue;
+        out.push("<p>" + line + "</p>");
+    }
+    return out.join("\n");
+}
+
 function isCipherLikeContent(html) {
     var s = (html || "").replace(/\s+/g, " ").trim();
     if (!s || s.length < 40) return false;
@@ -35,8 +65,13 @@ function tryApiContent(url) {
     var json = response.json();
     if (!json || !json.chapter) return { content: "", requireLogin: false };
 
+    var content = cleanHtml(json.chapter.content || "");
+    if (content && content.indexOf("<") < 0) {
+        content = plainTextToHtml(content);
+    }
+
     return {
-        content: cleanHtml(json.chapter.content || ""),
+        content: content,
         requireLogin: !!json.requireLogin
     };
 }
@@ -56,7 +91,7 @@ function extractHtmlContent(doc) {
         var node = doc.select(selectors[i]).first();
         if (!node) continue;
         var html = cleanHtml(node.html() || "");
-        if (html && html.length > 80) return html;
+        if (isReadableHtml(html)) return html;
     }
     return cleanHtml(doc.html() || "");
 }
@@ -66,7 +101,7 @@ function execute(url) {
         var apiRes = tryApiContent(url);
         var apiHtml = apiRes && apiRes.content ? apiRes.content : "";
 
-        if (apiHtml && apiHtml.length > 80 && !isCipherLikeContent(apiHtml)) {
+        if (apiHtml && isReadableHtml(apiHtml) && !isCipherLikeContent(apiHtml)) {
             return Response.success(apiHtml);
         }
 
@@ -90,8 +125,13 @@ function execute(url) {
         var doc = response.html("utf-8");
         var html = extractHtmlContent(doc);
 
-        if (html && html.length > 20 && !isCipherLikeContent(html)) {
+        if (isReadableHtml(html) && !isCipherLikeContent(html)) {
             return Response.success(html);
+        }
+
+        var textOnly = (doc.text() || "").replace(/\s+/g, " ").trim();
+        if (textOnly && textOnly.length > 60 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(textOnly)) {
+            return Response.success(plainTextToHtml(textOnly));
         }
 
         var text = doc.text() || "";
