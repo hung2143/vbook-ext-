@@ -1,11 +1,12 @@
 function collectChapters(doc, seen, host) {
     var list = [];
     var nodes = doc.select("a[href*='/chuong']");
-    nodes.forEach(function (a) {
+    for (var i = 0; i < nodes.size(); i++) {
+        var a = nodes.get(i);
         var href = a.attr('href');
-        if (!href) return;
+        if (!href) continue;
         if (!href.startsWith('http')) href = host + href;
-        if (seen[href]) return;
+        if (seen[href]) continue;
         seen[href] = true;
 
         var name = a.text();
@@ -19,7 +20,7 @@ function collectChapters(doc, seen, host) {
             url: href,
             host: host
         });
-    });
+    }
     return list;
 }
 
@@ -39,21 +40,26 @@ function execute(url) {
 
     // Lấy số trang mục lục (nếu có /page/2/ ...)
     var maxPage = 1;
-    doc.select("a[href*='/page/']").forEach(function (a) {
+    var pageLinks = doc.select("a[href*='/page/']");
+    for (var p = 0; p < pageLinks.size(); p++) {
+        var a = pageLinks.get(p);
         var href = a.attr('href');
+        if (!href) continue;
         var m = href.match(/\/page\/(\d+)\//);
         if (m) {
             var n = parseInt(m[1], 10);
             if (!isNaN(n) && n > maxPage) maxPage = n;
         }
-    });
+    }
 
     var base = url;
     if (!base.endsWith('/')) base += '/';
     base = base.replace(/\/page\/\d+\/$/, '');
     if (!base.endsWith('/')) base += '/';
 
-    var limit = Math.min(maxPage, 5); // tránh lặp quá nhiều
+    // Quét toàn bộ phân trang chương, để không bị thiếu chương khi truyện dài.
+    // Đặt giới hạn an toàn cao để tránh vòng lặp quá lớn nếu site lỗi phân trang.
+    var limit = Math.min(maxPage, 200);
     for (var i = 2; i <= limit; i++) {
         var pageUrl = base + "page/" + i + "/";
         var r = fetch(pageUrl, {
@@ -64,7 +70,11 @@ function execute(url) {
         });
         if (!r.ok) continue;
         var d = r.html("utf-8");
+        var before = data.length;
         data = data.concat(collectChapters(d, seen, host));
+
+        // Nếu trang phân trang không còn chương mới thì có thể đã tới cuối.
+        if (data.length === before && i > maxPage) break;
     }
 
     return Response.success(data);
