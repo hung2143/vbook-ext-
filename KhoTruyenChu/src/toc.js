@@ -29,18 +29,98 @@ function shouldSkipAnchor(name, href) {
     return false;
 }
 
-function collectChapters(doc, result, seen, host) {
+function htmlDecode(s) {
+    if (!s) return "";
+    return s
+        .replace(/&amp;/g, "&")
+        .replace(/&quot;/g, '"')
+        .replace(/&#039;/g, "'")
+        .replace(/&apos;/g, "'")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&#8211;/g, "-")
+        .replace(/&#8212;/g, "-")
+        .replace(/&#8230;/g, "...")
+        .replace(/&#(\d+);/g, function (_, num) {
+            var code = parseInt(num, 10);
+            return isNaN(code) ? _ : String.fromCharCode(code);
+        });
+}
+
+function extractChapterSectionHtml(pageHtml) {
+    if (!pageHtml) return "";
+    var lower = pageHtml.toLowerCase();
+
+    var start = lower.indexOf("danh sách chương");
+    if (start < 0) start = lower.indexOf("danh sach chuong");
+    if (start < 0) return "";
+
+    // Chỉ giữ phần sau tiêu đề Danh sách chương.
+    var segment = pageHtml.substring(start);
+    var segmentLower = segment.toLowerCase();
+
+    // Cắt tại phân trang hoặc cuối article/content để tránh ăn footer/menu.
+    var cutCandidates = [
+        segmentLower.indexOf("page-numbers"),
+        segmentLower.indexOf("class=\"pagination"),
+        segmentLower.indexOf("class='pagination"),
+        segmentLower.indexOf("</article>"),
+        segmentLower.indexOf("</main>"),
+        segmentLower.indexOf("copyright")
+    ];
+
+    var cut = segment.length;
+    for (var i = 0; i < cutCandidates.length; i++) {
+        var idx = cutCandidates[i];
+        if (idx > 0 && idx < cut) cut = idx;
+    }
+
+    return segment.substring(0, cut);
+}
+
+function collectChaptersFromHtml(sectionHtml, result, seen, host) {
     var added = 0;
+    if (!sectionHtml) return 0;
 
-    // Lấy chapter box từ khu vực danh sách chương.
-    // Không ép pattern /chuong- để không bỏ sót ngoại truyện.
-    var chapterNodes = doc.select(".entry-content h2 a[href], article h2 a[href], h2 a[href]");
-    for (var i = 0; i < chapterNodes.size(); i++) {
-        var a = chapterNodes.get(i);
-        var href = normalizeUrl(a.attr("href"), host);
+    // Lấy đúng box chương theo thứ tự xuất hiện trong DOM (trái -> phải, trên -> dưới).
+    var re = /<h2[^>]*>\s*<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>\s*<\/h2>/gi;
+    var m;
+    while ((m = re.exec(sectionHtml)) !== null) {
+        var href = normalizeUrl((m[1] || "").trim(), host);
+        var rawName = (m[2] || "").replace(/<[^>]*>/g, " ");
+        var name = cleanChapterName(htmlDecode(rawName).replace(/\s+/g, " ").trim());
+
         if (!href || seen[href]) continue;
+        if (shouldSkipAnchor(name, href)) continue;
+        if (!name) continue;
 
+        seen[href] = true;
+        result.push({
+            name: name,
+            url: href,
+            host: host
+        });
+        added++;
+    }
+
+    return added;
+}
+
+function collectChapters(doc, result, seen, host) {
+    var pageHtml = doc.html() || "";
+    var sectionHtml = extractChapterSectionHtml(pageHtml);
+    var added = collectChaptersFromHtml(sectionHtml, result, seen, host);
+
+    if (added > 0) return added;
+
+    // Fallback an toàn nếu theme thay đổi cấu trúc heading.
+    var nodes = doc.select(".entry-content h2 a[href], article h2 a[href]");
+    for (var i = 0; i < nodes.size(); i++) {
+        var a = nodes.get(i);
+        var href = normalizeUrl(a.attr("href"), host);
         var name = cleanChapterName(a.text() || a.attr("title"));
+        if (!href || seen[href]) continue;
         if (shouldSkipAnchor(name, href)) continue;
         if (!name) continue;
 
