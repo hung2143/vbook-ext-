@@ -50,13 +50,13 @@ function htmlDecode(s) {
 
 function extractChapterSectionHtml(pageHtml) {
     if (!pageHtml) return "";
-    var lower = pageHtml.toLowerCase();
+    // Bám đúng thẻ heading chứa "Danh sách chương" để tránh match nhầm text ở script/footer.
+    var headingRe = /<h[1-6][^>]*>[\s\S]*?danh\s*(?:sá|sa)ch\s*ch(?:ươ|uo)ng[\s\S]*?<\/h[1-6]>/i;
+    var hm = headingRe.exec(pageHtml);
+    if (!hm) return "";
 
-    var start = lower.indexOf("danh sách chương");
-    if (start < 0) start = lower.indexOf("danh sach chuong");
-    if (start < 0) return "";
-
-    // Chỉ giữ phần sau tiêu đề Danh sách chương.
+    // Chỉ giữ phần sau heading Danh sách chương.
+    var start = hm.index + hm[0].length;
     var segment = pageHtml.substring(start);
     var segmentLower = segment.toLowerCase();
 
@@ -114,7 +114,7 @@ function collectChapters(doc, result, seen, host) {
 
     if (added > 0) return added;
 
-    // Fallback an toàn nếu theme thay đổi cấu trúc heading.
+    // Fallback chặt: chỉ giữ các tiêu đề chapter-like để tránh lẫn block khác.
     var nodes = doc.select(".entry-content h2 a[href], article h2 a[href]");
     for (var i = 0; i < nodes.size(); i++) {
         var a = nodes.get(i);
@@ -122,6 +122,7 @@ function collectChapters(doc, result, seen, host) {
         var name = cleanChapterName(a.text() || a.attr("title"));
         if (!href || seen[href]) continue;
         if (shouldSkipAnchor(name, href)) continue;
+        if (!/^(?:chương|chuong|ngoại\s*truyện|ngoai\s*truyen|phần|phan|quyển|quyen)\b/i.test(name)) continue;
         if (!name) continue;
 
         seen[href] = true;
