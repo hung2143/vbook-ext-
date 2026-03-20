@@ -7,8 +7,38 @@ function cleanHtml(html) {
     return html;
 }
 
+function extractChapterId(url) {
+    var m = (url || "").match(/\/read\/([^\/?#]+)/i);
+    return m ? m[1] : "";
+}
+
+function tryApiContent(url) {
+    var chapterId = extractChapterId(url);
+    if (!chapterId) return "";
+
+    var response = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
+        headers: {
+            "user-agent": UserAgent.chrome(),
+            "referer": "https://trangtruyen.site/"
+        }
+    });
+    if (!response.ok) return "";
+
+    var json = response.json();
+    if (!json || !json.chapter) return "";
+
+    var content = json.chapter.content || "";
+    if (!content) return "";
+    return cleanHtml(content);
+}
+
 function execute(url) {
     try {
+        var apiHtml = tryApiContent(url);
+        if (apiHtml && apiHtml.length > 80) {
+            return Response.success(apiHtml);
+        }
+
         var response = fetch(url, {
             headers: {
                 "user-agent": UserAgent.chrome(),
@@ -36,6 +66,10 @@ function execute(url) {
 
         if (!html) html = doc.html() || "";
         html = cleanHtml(html);
+
+        if (/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test((doc.text() || ""))) {
+            return null;
+        }
 
         return Response.success(html);
     } catch (e) {

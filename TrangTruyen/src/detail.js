@@ -14,6 +14,11 @@ function extractSlug(url) {
     return m ? m[1] : "";
 }
 
+function extractChapterId(url) {
+    var m = (url || "").match(/\/read\/([^\/?#]+)/i);
+    return m ? m[1] : "";
+}
+
 function fetchStoryBySlug(slug) {
     if (!slug) return null;
     var apiResponse = fetch("https://trangtruyen.site/api/stories/" + slug, {
@@ -48,14 +53,37 @@ function extractStorySlugFromReadPage(url) {
     return m ? m[1] : "";
 }
 
+function extractStoryFromChapterApi(chapterId) {
+    if (!chapterId) return null;
+    var response = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
+        headers: {
+            "user-agent": UserAgent.chrome(),
+            "referer": "https://trangtruyen.site/"
+        }
+    });
+    if (!response.ok) return null;
+
+    var json = response.json();
+    return json ? json.story : null;
+}
+
 function execute(url) {
     try {
         var slug = extractSlug(url);
+        var story = null;
+
         if (!slug && /\/read\//i.test(url || "")) {
-            slug = extractStorySlugFromReadPage(url);
+            var chapterId = extractChapterId(url);
+            story = extractStoryFromChapterApi(chapterId);
+            if (!story) {
+                slug = extractStorySlugFromReadPage(url);
+            }
         }
 
-        var story = fetchStoryBySlug(slug);
+        if (!story && slug) {
+            story = fetchStoryBySlug(slug);
+        }
+
         if (story) {
             var category = "";
             if (story.categories && story.categories.length) {
@@ -78,6 +106,9 @@ function execute(url) {
                 host: "https://trangtruyen.site"
             });
         }
+
+        // Only /stories/* and /read/* should be treated as embeddable novel URLs.
+        if (!/\/stories\/|\/read\//i.test(url || "")) return null;
 
         var response = fetch(url, {
             headers: {
