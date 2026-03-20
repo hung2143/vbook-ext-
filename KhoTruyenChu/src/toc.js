@@ -13,6 +13,21 @@ function cleanChapterName(name) {
     return n;
 }
 
+function normalizeNameKey(name) {
+    var n = (name || "").toLowerCase().replace(/\s+/g, " ").trim();
+    if (!n) return "";
+
+    // Ưu tiên key theo số chương để loại các bản trùng URL khác nhau ở trang cuối.
+    var m = n.match(/^(?:chương|chuong)\s*(\d+)/i);
+    if (m) return "c:" + m[1];
+
+    if (/^(?:ngoại\s*truyện|ngoai\s*truyen)/i.test(n)) {
+        return "e:" + n.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+    }
+
+    return "t:" + n.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+}
+
 function shouldSkipAnchor(name, href) {
     var n = (name || "").toLowerCase();
     var u = (href || "").toLowerCase();
@@ -79,7 +94,7 @@ function extractChapterSectionHtml(pageHtml) {
     return segment.substring(0, cut);
 }
 
-function collectChaptersFromHtml(sectionHtml, result, seen, host) {
+function collectChaptersFromHtml(sectionHtml, result, seen, seenName, host) {
     var added = 0;
     if (!sectionHtml) return 0;
 
@@ -90,12 +105,15 @@ function collectChaptersFromHtml(sectionHtml, result, seen, host) {
         var href = normalizeUrl((m[1] || "").trim(), host);
         var rawName = (m[2] || "").replace(/<[^>]*>/g, " ");
         var name = cleanChapterName(htmlDecode(rawName).replace(/\s+/g, " ").trim());
+        var nameKey = normalizeNameKey(name);
 
         if (!href || seen[href]) continue;
         if (shouldSkipAnchor(name, href)) continue;
+        if (nameKey && seenName[nameKey]) continue;
         if (!name) continue;
 
         seen[href] = true;
+        if (nameKey) seenName[nameKey] = true;
         result.push({
             name: name,
             url: href,
@@ -107,10 +125,10 @@ function collectChaptersFromHtml(sectionHtml, result, seen, host) {
     return added;
 }
 
-function collectChapters(doc, result, seen, host) {
+function collectChapters(doc, result, seen, seenName, host) {
     var pageHtml = doc.html() || "";
     var sectionHtml = extractChapterSectionHtml(pageHtml);
-    var added = collectChaptersFromHtml(sectionHtml, result, seen, host);
+    var added = collectChaptersFromHtml(sectionHtml, result, seen, seenName, host);
 
     if (added > 0) return added;
 
@@ -120,12 +138,15 @@ function collectChapters(doc, result, seen, host) {
         var a = nodes.get(i);
         var href = normalizeUrl(a.attr("href"), host);
         var name = cleanChapterName(a.text() || a.attr("title"));
+        var nameKey = normalizeNameKey(name);
         if (!href || seen[href]) continue;
         if (shouldSkipAnchor(name, href)) continue;
         if (!/^(?:chương|chuong|ngoại\s*truyện|ngoai\s*truyen|phần|phan|quyển|quyen)\b/i.test(name)) continue;
+        if (nameKey && seenName[nameKey]) continue;
         if (!name) continue;
 
         seen[href] = true;
+        if (nameKey) seenName[nameKey] = true;
         result.push({
             name: name,
             url: href,
@@ -162,7 +183,8 @@ function execute(url) {
     var doc = response.html("utf-8");
     var data = [];
     var seen = {};
-    collectChapters(doc, data, seen, host);
+    var seenName = {};
+    collectChapters(doc, data, seen, seenName, host);
 
     var base = url;
     if (!base.endsWith('/')) base += '/';
@@ -184,7 +206,7 @@ function execute(url) {
             });
             if (!fr.ok) break;
             var fd = fr.html("utf-8");
-            var fAdded = collectChapters(fd, data, seen, host);
+            var fAdded = collectChapters(fd, data, seen, seenName, host);
             if (fAdded === 0) break;
         }
         return Response.success(data);
@@ -201,7 +223,7 @@ function execute(url) {
         });
         if (!r.ok) continue;
         var d = r.html("utf-8");
-        collectChapters(d, data, seen, host);
+        collectChapters(d, data, seen, seenName, host);
     }
 
     return Response.success(data);
