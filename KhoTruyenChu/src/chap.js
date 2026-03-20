@@ -6,9 +6,10 @@ function cleanHtml(html) {
 
     // Loại bỏ các khối điều hướng/chỉnh giao diện trong trang chương.
     html = html.replace(/<a[^>]*>\s*[≣\s]*Mục\s*lục\s*<\/a>/gi, "");
-    html = html.replace(/<a[^>]*>\s*Chương\s*sau\s*»?\s*<\/a>/gi, "");
+    html = html.replace(/<a[^>]*>\s*[«»<>\-\s]*\s*Chương\s*(?:trước|sau)\s*[«»<>\-\s]*\s*<\/a>/gi, "");
     html = html.replace(/Cỡ\s*chữ\s*:\s*A-\s*A\+/gi, "");
-    html = html.replace(/[◑o]\s*Giao\s*diện/gi, "");
+    html = html.replace(/[◑○●◉o]\s*Giao\s*diện/gi, "");
+    html = html.replace(/[«»<>\-\s]*Chương\s*(?:trước|sau)[«»<>\-\s]*/gi, "");
 
     // Loại bỏ các phần subscribe/login/comment cuối bài.
     html = html.replace(/<form[\s\S]*?<\/form>/gi, "");
@@ -42,10 +43,10 @@ function execute(url) {
         var text = (p.text() || "").replace(/\s+/g, " ").trim();
         if (!text) continue;
         if (/^(?:≣\s*)?mục\s*lục$/i.test(text)) continue;
-        if (/^chương\s*(?:trước|sau)/i.test(text)) continue;
+        if (/^[«»<>\-\s]*chương\s*(?:trước|sau)/i.test(text)) continue;
         if (/^cỡ\s*chữ\s*:?$/i.test(text)) continue;
         if (/^a[+-]$/i.test(text)) continue;
-        if (/^giao\s*diện$/i.test(text)) continue;
+        if (/^[◑○●◉o\s]*giao\s*diện$/i.test(text)) continue;
         if (/^(subscribe|login)$/i.test(text)) continue;
         parts.push("<p>" + p.html() + "</p>");
     }
