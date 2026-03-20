@@ -13,26 +13,6 @@ function cleanChapterName(name) {
     return n;
 }
 
-function normalizeNameKey(name) {
-    var n = (name || "").toLowerCase().replace(/\s+/g, " ").trim();
-    if (!n) return "";
-
-    // Chỉ dedupe theo số cho mục "Chương N".
-    // Các mục đặc biệt (ngoại truyện/phiên ngoại/hậu ký...) dedupe theo URL để tránh rớt chương.
-    var m = n.match(/^(?:chương|chuong)\s*(\d+)/i);
-    if (m) return "c:" + m[1];
-
-    return "";
-}
-
-function extractChapterNumber(name) {
-    var n = (name || "").toLowerCase();
-    var m = n.match(/^(?:chương|chuong)\s*(\d+)/i);
-    if (!m) return -1;
-    var num = parseInt(m[1], 10);
-    return isNaN(num) ? -1 : num;
-}
-
 function shouldSkipAnchor(name, href) {
     var n = (name || "").toLowerCase();
     var u = (href || "").toLowerCase();
@@ -99,29 +79,23 @@ function extractChapterSectionHtml(pageHtml) {
     return segment.substring(0, cut);
 }
 
-function collectChaptersFromHtml(sectionHtml, result, seen, seenName, orderState, host) {
+function collectChaptersFromHtml(sectionHtml, result, seen, host) {
     var added = 0;
     if (!sectionHtml) return 0;
 
-    // Lấy đúng box chương theo thứ tự xuất hiện trong DOM (trái -> phải, trên -> dưới).
-    var re = /<h2[^>]*>\s*<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>\s*<\/h2>/gi;
+    // Lấy tất cả anchor trong section để không rớt các mục không có tiền tố "Chương".
+    var re = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
     var m;
     while ((m = re.exec(sectionHtml)) !== null) {
         var href = normalizeUrl((m[1] || "").trim(), host);
         var rawName = (m[2] || "").replace(/<[^>]*>/g, " ");
         var name = cleanChapterName(htmlDecode(rawName).replace(/\s+/g, " ").trim());
-        var nameKey = normalizeNameKey(name);
-        var chapterNo = extractChapterNumber(name);
 
         if (!href || seen[href]) continue;
         if (shouldSkipAnchor(name, href)) continue;
-        if (chapterNo >= 0 && chapterNo < orderState.maxChapterNo) continue;
-        if (nameKey && seenName[nameKey]) continue;
         if (!name) continue;
 
         seen[href] = true;
-        if (nameKey) seenName[nameKey] = true;
-        if (chapterNo > orderState.maxChapterNo) orderState.maxChapterNo = chapterNo;
         result.push({
             name: name,
             url: href,
@@ -133,31 +107,24 @@ function collectChaptersFromHtml(sectionHtml, result, seen, seenName, orderState
     return added;
 }
 
-function collectChapters(doc, result, seen, seenName, orderState, host) {
+function collectChapters(doc, result, seen, host) {
     var pageHtml = doc.html() || "";
     var sectionHtml = extractChapterSectionHtml(pageHtml);
-    var added = collectChaptersFromHtml(sectionHtml, result, seen, seenName, orderState, host);
+    var added = collectChaptersFromHtml(sectionHtml, result, seen, host);
 
     if (added > 0) return added;
 
-    // Fallback chặt: chỉ giữ các tiêu đề chapter-like để tránh lẫn block khác.
+    // Fallback: ưu tiên h2 anchor trong nội dung.
     var nodes = doc.select(".entry-content h2 a[href], article h2 a[href]");
     for (var i = 0; i < nodes.size(); i++) {
         var a = nodes.get(i);
         var href = normalizeUrl(a.attr("href"), host);
         var name = cleanChapterName(a.text() || a.attr("title"));
-        var nameKey = normalizeNameKey(name);
-        var chapterNo = extractChapterNumber(name);
         if (!href || seen[href]) continue;
         if (shouldSkipAnchor(name, href)) continue;
-        if (!/^(?:chương|chuong|ngoại\s*truyện|ngoai\s*truyen|phần|phan|quyển|quyen)\b/i.test(name)) continue;
-        if (chapterNo >= 0 && chapterNo < orderState.maxChapterNo) continue;
-        if (nameKey && seenName[nameKey]) continue;
         if (!name) continue;
 
         seen[href] = true;
-        if (nameKey) seenName[nameKey] = true;
-        if (chapterNo > orderState.maxChapterNo) orderState.maxChapterNo = chapterNo;
         result.push({
             name: name,
             url: href,
@@ -213,9 +180,7 @@ function execute(url) {
     var doc = response.html("utf-8");
     var data = [];
     var seen = {};
-    var seenName = {};
-    var orderState = { maxChapterNo: 0 };
-    collectChapters(doc, data, seen, seenName, orderState, host);
+    collectChapters(doc, data, seen, host);
 
     // Ưu tiên lấy đúng trang cuối từ paginator của box Danh sách chương.
     var lastPage = detectLastPage(doc);
@@ -232,7 +197,7 @@ function execute(url) {
             });
             if (!fr.ok) break;
             var fd = fr.html("utf-8");
-            var fAdded = collectChapters(fd, data, seen, seenName, orderState, host);
+            var fAdded = collectChapters(fd, data, seen, host);
             if (fAdded === 0) break;
         }
         return Response.success(data);
@@ -249,7 +214,7 @@ function execute(url) {
         });
         if (!r.ok) continue;
         var d = r.html("utf-8");
-        collectChapters(d, data, seen, seenName, orderState, host);
+        collectChapters(d, data, seen, host);
     }
 
     return Response.success(data);
