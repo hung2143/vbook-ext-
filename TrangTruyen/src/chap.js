@@ -19,9 +19,12 @@ function htmlToText(html) {
 }
 
 function isReadableHtml(html) {
+    if (!html) return false;
+    if (!/<p[\s>]|<br\s*\/?\s*>|<div[^>]*chapter|<article[\s>]/i.test(html)) return false;
     var text = htmlToText(html);
     if (!text || text.length < 30) return false;
     if (/^(đăng nhập|login|sign in)$/i.test(text)) return false;
+    if (/Trang\s*Truyện\s*Đọc\s*nhanh|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(text)) return false;
     return true;
 }
 
@@ -81,10 +84,9 @@ function extractHtmlContent(doc) {
         ".chapter-content",
         ".reader-content",
         ".chapter-body",
-        "article",
-        "main",
-        ".content",
-        "body"
+        "article .chapter-content",
+        "main .chapter-content",
+        ".content .chapter-content"
     ];
 
     for (var i = 0; i < selectors.length; i++) {
@@ -93,7 +95,7 @@ function extractHtmlContent(doc) {
         var html = cleanHtml(node.html() || "");
         if (isReadableHtml(html)) return html;
     }
-    return cleanHtml(doc.html() || "");
+    return "";
 }
 
 function execute(url) {
@@ -125,12 +127,16 @@ function execute(url) {
         var doc = response.html("utf-8");
         var html = extractHtmlContent(doc);
 
+        if (apiRes && apiRes.requireLogin) {
+            return Response.success("<p>Nội dung chương yêu cầu đăng nhập. Hãy đăng nhập lại trong app rồi tải lại chương.</p>");
+        }
+
         if (isReadableHtml(html) && !isCipherLikeContent(html)) {
             return Response.success(html);
         }
 
         var textOnly = (doc.text() || "").replace(/\s+/g, " ").trim();
-        if (textOnly && textOnly.length > 60 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(textOnly)) {
+        if (textOnly && textOnly.length > 60 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(textOnly)) {
             return Response.success(plainTextToHtml(textOnly));
         }
 
