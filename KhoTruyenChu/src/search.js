@@ -70,7 +70,9 @@ function execute(key, page) {
         pushNovel(link, name, cover, desc);
     }
 
-    if (data.length === 0) {
+    // Layout có thể gói toàn bộ kết quả trong 1 card lớn,
+    // khi đó parse card chỉ ra 1 item đầu tiên.
+    if (data.length < 5) {
         var items = doc.select("a[href*='/truyen/']");
         for (var k = 0; k < items.size(); k++) {
             var e = items.get(k);

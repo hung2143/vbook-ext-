@@ -96,7 +96,9 @@ function execute(url, page) {
         }
 
         // Fallback: lấy toàn bộ anchor truyện.
-        if (data.length === 0) {
+        // Một số layout WordPress chỉ có 1 article bao toàn bộ nội dung,
+        // nên parse theo card có thể chỉ nhặt được 1 item đầu tiên.
+        if (data.length < 5) {
             var items = doc.select("a[href*='/truyen/']");
             for (var k = 0; k < items.size(); k++) {
                 var a2 = items.get(k);
