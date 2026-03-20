@@ -1,54 +1,39 @@
 function execute(url, page) {
     if (!page) page = '1';
-    // url dự kiến dạng: https://trangtruyen.site/stories?...&page=
-    let listUrl = url + page;
-    let response = fetch(listUrl);
-    if (response.ok) {
-        let doc = response.html('utf-8');
-        const data = [];
+    var listUrl = url + page;
+    var doc = Http.get(listUrl).html();
 
-        // Lưu ý: Các selector dưới đây mang tính ước lượng, bạn nên
-        // mở trang /stories trong trình duyệt và chỉnh lại cho khớp DOM thực tế.
-        // Giả định mỗi truyện nằm trong phần tử có data-story hoặc article.
-        let items = doc.select("[data-story], article a[href^='/stories/']");
+    if (!doc) return null;
 
-        const seen = {};
-        items.forEach(e => {
-            let a = e.tagName() === 'a' ? e : e.select("a[href^='/stories/']").first();
-            if (!a) return;
-            let link = a.attr('href');
-            if (!link) return;
-            if (!link.startsWith('http')) link = 'https://trangtruyen.site' + link;
-            if (seen[link]) return;
-            seen[link] = true;
+    var data = [];
 
-            let name = a.text();
-            if (!name) name = a.attr('title');
+    // Trên trang /stories, các truyện đều có link dạng
+    // https://trangtruyen.site/stories/slug-... nên chỉ cần bắt theo href.
+    var items = doc.select("a[href^='https://trangtruyen.site/stories/'], a[href^='/stories/']");
 
-            let coverEl = e.select('img').first();
-            let cover = coverEl ? coverEl.attr('src') : '';
-            if (cover && !cover.startsWith('http')) cover = 'https://trangtruyen.site' + cover;
+    var seen = {};
+    items.forEach(function (a) {
+        var link = a.attr('href');
+        if (!link) return;
+        if (!link.startsWith('http')) link = 'https://trangtruyen.site' + link;
+        if (seen[link]) return;
+        seen[link] = true;
 
-            let metaText = e.text();
+        var name = a.text();
+        if (!name) name = a.attr('title');
 
-            data.push({
-                name: name,
-                link: link,
-                cover: cover,
-                description: metaText,
-                host: 'https://trangtruyen.site'
-            });
+        data.push({
+            name: name,
+            link: link,
+            cover: '',
+            description: '',
+            host: 'https://trangtruyen.site'
         });
+    });
 
-        // TODO: chỉnh selector phân trang cho đúng nếu có.
-        let next = null;
-        let nextLink = doc.select("a[href*='page=']").last();
-        if (nextLink) {
-            let m = nextLink.attr('href').match(/page=(\d+)/);
-            if (m) next = m[1];
-        }
+    // Trang hiện tại hầu như không hiển thị rõ nút trang kế,
+    // nếu sau này có phân trang, có thể cải tiến thêm.
+    var next = null;
 
-        return Response.success(data, next);
-    }
-    return null;
+    return Response.success(data, next);
 }
