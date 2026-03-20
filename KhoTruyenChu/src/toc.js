@@ -186,12 +186,31 @@ function detectLastPage(doc) {
 
 function execute(url) {
     var host = "https://khotruyenchu.sbs";
-    var response = fetch(url, {
+    var base = url;
+    if (!base.endsWith('/')) base += '/';
+    base = base.replace(/\/page\/\d+\/$/, '');
+    if (!base.endsWith('/')) base += '/';
+
+    // Luôn lấy từ trang đầu để giữ thứ tự chuẩn (tránh trường hợp engine truyền vào /page/N/).
+    var firstPageUrl = base;
+
+    var response = fetch(firstPageUrl, {
         headers: {
             "user-agent": UserAgent.chrome(),
             "referer": host + "/"
         }
     });
+
+    // Fallback: nếu trang đầu lỗi thì mới dùng URL gốc đầu vào.
+    if (!response.ok && firstPageUrl !== url) {
+        response = fetch(url, {
+            headers: {
+                "user-agent": UserAgent.chrome(),
+                "referer": host + "/"
+            }
+        });
+    }
+
     if (!response.ok) return null;
 
     var doc = response.html("utf-8");
@@ -200,11 +219,6 @@ function execute(url) {
     var seenName = {};
     var orderState = { maxChapterNo: 0 };
     collectChapters(doc, data, seen, seenName, orderState, host);
-
-    var base = url;
-    if (!base.endsWith('/')) base += '/';
-    base = base.replace(/\/page\/\d+\/$/, '');
-    if (!base.endsWith('/')) base += '/';
 
     // Ưu tiên lấy đúng trang cuối từ paginator của box Danh sách chương.
     var lastPage = detectLastPage(doc);
@@ -216,7 +230,7 @@ function execute(url) {
             var fr = fetch(fallbackPageUrl, {
                 headers: {
                     "user-agent": UserAgent.chrome(),
-                    "referer": url
+                    "referer": firstPageUrl
                 }
             });
             if (!fr.ok) break;
@@ -233,7 +247,7 @@ function execute(url) {
         var r = fetch(pageUrl, {
             headers: {
                 "user-agent": UserAgent.chrome(),
-                "referer": url
+                "referer": firstPageUrl
             }
         });
         if (!r.ok) continue;
