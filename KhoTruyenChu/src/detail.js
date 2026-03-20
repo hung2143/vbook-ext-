@@ -8,6 +8,7 @@ function execute(url) {
     if (!response.ok) return null;
 
     var doc = response.html("utf-8");
+    var pageHtml = doc.html() || "";
 
     function cleanText(s) {
         return (s || "").replace(/\s+/g, " ").trim();
@@ -27,18 +28,28 @@ function execute(url) {
 
     var fullText = doc.text() || "";
 
+    function extractField(label) {
+        // Ưu tiên lấy trực tiếp từ HTML để tránh dính các đoạn text phía sau.
+        var re = new RegExp(label + "\\s*:\\s*(?:<[^>]+>\\s*)*([^<\\n\\r]+)", "i");
+        var m = pageHtml.match(re);
+        if (m) return cleanText(m[1]);
+
+        // Fallback text thuần, chặn tại nhãn kế tiếp thường gặp.
+        var re2 = new RegExp(label + "\\s*:\\s*([^\\n\\r]+)", "i");
+        var m2 = fullText.match(re2);
+        if (!m2) return "";
+        return cleanText(m2[1]
+            .replace(/(Tác\s*giả\s*:|Thể\s*loại\s*:|Tình\s*trạng\s*:|Chương\s*mới\s*cập\s*nhật|Danh\s*sách\s*chương).*/i, "")
+        );
+    }
+
     var author = "";
     var category = "";
     var status = "";
 
-    var am = fullText.match(/Tác\s*giả\s*:\s*([^📌🏷\n]+)/i);
-    if (am) author = cleanText(am[1]);
-
-    var cm = fullText.match(/Thể\s*loại\s*:\s*([^📌\n]+)/i);
-    if (cm) category = cleanText(cm[1]);
-
-    var sm = fullText.match(/Tình\s*trạng\s*:\s*([^\n]+)/i);
-    if (sm) status = cleanText(sm[1]);
+    author = extractField("Tác\\s*giả");
+    category = extractField("Thể\\s*loại");
+    status = extractField("Tình\\s*trạng");
 
     var contentNode = doc.select(".entry-content, article .entry-content, article").first();
     var contentHtml = contentNode ? contentNode.html() : doc.html();
@@ -60,6 +71,13 @@ function execute(url) {
     introText = cleanText(introText
         .replace(/Skip to content/gi, "")
         .replace(/Copyright\s*©[^]+$/i, "")
+        .replace(/Tác\s*giả\s*:[^]+?(?=Thể\s*loại\s*:|Tình\s*trạng\s*:|$)/i, "")
+        .replace(/Thể\s*loại\s*:[^]+?(?=Tình\s*trạng\s*:|$)/i, "")
+        .replace(/Tình\s*trạng\s*:[^]+?(?=Đọc\s*Từ\s*Đầu|Chương\s*Mới\s*Nhất|Chương\s*mới\s*cập\s*nhật|Danh\s*sách\s*chương|$)/i, "")
+        .replace(/Đọc\s*Từ\s*Đầu[\s\S]*$/i, "")
+        .replace(/Chương\s*Mới\s*Nhất[\s\S]*$/i, "")
+        .replace(/Chương\s*mới\s*cập\s*nhật[\s\S]*$/i, "")
+        .replace(/Danh\s*sách\s*chương[\s\S]*$/i, "")
     );
 
     var infoLines = [];
