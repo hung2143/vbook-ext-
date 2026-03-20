@@ -7,6 +7,23 @@ function cleanHtml(html) {
     return html;
 }
 
+function isCipherLikeContent(html) {
+    var s = (html || "").replace(/\s+/g, " ").trim();
+    if (!s || s.length < 40) return false;
+
+    if (/^\{\s*"v"\s*:\s*\d+/i.test(s) && /"l2"\s*:/i.test(s)) return true;
+    if (/^\{\s*"v"\s*:\s*\d+/i.test(s) && /[A-Za-z0-9+/=]{80,}/.test(s)) return true;
+
+    var looksLikeHtml = /<p[\s>]|<div[\s>]|<br\s*\/?\s*>|<article[\s>]|<section[\s>]/i.test(s);
+    if (looksLikeHtml) return false;
+
+    var alphaNum = (s.match(/[A-Za-z0-9]/g) || []).length;
+    var punct = (s.match(/[{}\[\]"'\/:+=]/g) || []).length;
+    if (alphaNum > 150 && punct > 30 && punct / Math.max(1, s.length) > 0.08) return true;
+
+    return false;
+}
+
 function extractChapterId(url) {
     var m = (url || "").match(/\/read\/([^\/?#]+)/i);
     return m ? m[1] : "";
@@ -38,7 +55,7 @@ function execute(url) {
     try {
         var apiRes = tryApiContent(url);
         var apiHtml = apiRes && apiRes.content ? apiRes.content : "";
-        if (apiHtml && apiHtml.length > 80) {
+        if (apiHtml && apiHtml.length > 80 && !isCipherLikeContent(apiHtml)) {
             return Response.success(apiHtml);
         }
 
@@ -69,6 +86,10 @@ function execute(url) {
 
         if (!html) html = doc.html() || "";
         html = cleanHtml(html);
+
+        if (isCipherLikeContent(html)) {
+            return Response.success("<p>Nội dung chương hiện đang được mã hóa từ nguồn truyện, plugin chưa thể giải mã tự động.</p>");
+        }
 
         var text = doc.text() || "";
         if (/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(text) || (apiRes && apiRes.requireLogin && (!html || html.length < 80))) {
