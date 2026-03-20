@@ -197,6 +197,127 @@ function normalizeParagraphs(payload) {
     return [];
 }
 
+function safeJsonParse(s) {
+    try {
+        return JSON.parse(s);
+    } catch (_) {
+        return null;
+    }
+}
+
+function findFirstKeyDeep(obj, keyName) {
+    if (!obj || typeof obj !== "object") return null;
+    if (obj.hasOwnProperty && obj.hasOwnProperty(keyName)) return obj[keyName];
+
+    if (Array.isArray(obj)) {
+        for (var i = 0; i < obj.length; i++) {
+            var hitArr = findFirstKeyDeep(obj[i], keyName);
+            if (hitArr !== null && hitArr !== undefined) return hitArr;
+        }
+        return null;
+    }
+
+    for (var k in obj) {
+        if (!obj.hasOwnProperty(k)) continue;
+        var v = obj[k];
+        if (v && typeof v === "object") {
+            var hit = findFirstKeyDeep(v, keyName);
+            if (hit !== null && hit !== undefined) return hit;
+        }
+    }
+    return null;
+}
+
+function findChapterIdDeep(obj) {
+    if (!obj || typeof obj !== "object") return "";
+
+    if (obj.chapter && obj.chapter.id) return String(obj.chapter.id);
+    if (obj.id && /^[a-f0-9]{16,}$/i.test(String(obj.id))) return String(obj.id);
+
+    if (Array.isArray(obj)) {
+        for (var i = 0; i < obj.length; i++) {
+            var idArr = findChapterIdDeep(obj[i]);
+            if (idArr) return idArr;
+        }
+        return "";
+    }
+
+    for (var k in obj) {
+        if (!obj.hasOwnProperty(k)) continue;
+        var v = obj[k];
+        if (v && typeof v === "object") {
+            var id = findChapterIdDeep(v);
+            if (id) return id;
+        }
+    }
+    return "";
+}
+
+function extractScriptText(scriptNode) {
+    if (!scriptNode) return "";
+    var out = "";
+    try { out = scriptNode.data() || ""; } catch (_) {}
+    if (!out) {
+        try { out = scriptNode.html() || ""; } catch (_) {}
+    }
+    if (!out) {
+        try { out = scriptNode.text() || ""; } catch (_) {}
+    }
+    return String(out || "");
+}
+
+function extractCipherMetaFromPage(doc, fallbackChapterId) {
+    if (!doc) return { cipherText: "", contentMetaV2: null, chapterId: fallbackChapterId || "" };
+
+    var scripts = doc.select("script");
+    var bestCipher = "";
+    var bestMeta = null;
+    var bestChapterId = "";
+
+    for (var i = 0; i < scripts.size(); i++) {
+        var scriptText = extractScriptText(scripts.get(i));
+        if (!scriptText) continue;
+        if (scriptText.length < 20) continue;
+
+        if (/contentMetaV2|grantId|"l2"\s*:/i.test(scriptText)) {
+            var parsed = safeJsonParse(scriptText);
+            if (parsed) {
+                var meta = findFirstKeyDeep(parsed, "contentMetaV2");
+                if (!bestMeta && meta && typeof meta === "object") bestMeta = meta;
+
+                var chapterObj = findFirstKeyDeep(parsed, "chapter");
+                if (chapterObj && chapterObj.content && isCipherLikeContent(chapterObj.content)) {
+                    bestCipher = String(chapterObj.content);
+                }
+
+                var idFromParsed = findChapterIdDeep(parsed);
+                if (!bestChapterId && idFromParsed) bestChapterId = idFromParsed;
+            }
+
+            if (!bestMeta) {
+                var metaMatch = scriptText.match(/"contentMetaV2"\s*:\s*(\{[\s\S]*?\})\s*(,|\})/i);
+                if (metaMatch) {
+                    var mObj = safeJsonParse(metaMatch[1]);
+                    if (mObj && typeof mObj === "object") bestMeta = mObj;
+                }
+            }
+        }
+
+        if (!bestCipher) {
+            var maybeCipher = extractCipherObject(scriptText);
+            if (maybeCipher && maybeCipher.l2) {
+                bestCipher = JSON.stringify(maybeCipher);
+            }
+        }
+    }
+
+    return {
+        cipherText: bestCipher || "",
+        contentMetaV2: bestMeta || null,
+        chapterId: bestChapterId || fallbackChapterId || ""
+    };
+}
+
 function paragraphsToHtml(paragraphs) {
     if (!paragraphs || !paragraphs.length) return "";
     var html = [];
@@ -334,10 +455,12 @@ function execute(url) {
     try {
         var apiRes = tryApiContent(url);
         var apiHtml = apiRes && apiRes.content ? apiRes.content : "";
+        var chapterId = (apiRes && apiRes.chapterId) ? apiRes.chapterId : extractChapterId(url);
+        var apiMeta = apiRes ? apiRes.contentMetaV2 : null;
 
-        if (apiHtml && isCipherLikeContent(apiHtml) && apiRes.contentMetaV2) {
+        if (apiHtml && isCipherLikeContent(apiHtml) && apiMeta) {
             try {
-                var decrypted = tryDecryptCipherContent(apiRes.chapterId, apiHtml, apiRes.contentMetaV2);
+                var decrypted = tryDecryptCipherContent(chapterId, apiHtml, apiMeta);
                 if (decrypted && decrypted.length > 30) {
                     return Response.success(decrypted);
                 }
@@ -367,6 +490,22 @@ function execute(url) {
         }
 
         var doc = response.html("utf-8");
+
+        var scriptExtract = extractCipherMetaFromPage(doc, chapterId);
+        if (scriptExtract && scriptExtract.cipherText && scriptExtract.contentMetaV2) {
+            try {
+                var decFromPage = tryDecryptCipherContent(
+                    scriptExtract.chapterId || chapterId,
+                    scriptExtract.cipherText,
+                    scriptExtract.contentMetaV2
+                );
+                if (decFromPage && decFromPage.length > 30) {
+                    return Response.success(decFromPage);
+                }
+            } catch (_) {
+            }
+        }
+
         var html = extractHtmlContent(doc);
 
         if (apiRes && apiRes.requireLogin) {
