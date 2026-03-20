@@ -18,44 +18,102 @@ function execute(key, page) {
     var data = [];
     var seen = {};
 
-    var items = doc.select("a[href*='/truyen/']");
-    items.forEach(function (e) {
-        var link = e.attr('href');
-        if (!link) return;
-        if (!link.startsWith('http')) link = 'https://khotruyenchu.sbs' + link;
-        if (seen[link]) return;
-        seen[link] = true;
+    function normalizeUrl(link) {
+        if (!link) return "";
+        if (!link.startsWith("http")) return "https://khotruyenchu.sbs" + link;
+        return link;
+    }
 
-        var name = e.text();
-        if (!name) name = e.attr('title');
+    function getNameFromAnchor(a, link) {
+        var name = a.text();
+        if (!name) name = a.attr("title");
+        if (!name) {
+            var img = a.select("img").first();
+            if (img) name = img.attr("alt");
+        }
         if (!name) {
             var slug = link.split('/').filter(Boolean).pop();
             name = decodeURIComponent(slug.replace(/-/g, ' '));
         }
+        return (name || "").replace(/\s+/g, " ").trim();
+    }
 
-        var cover = "";
-        var desc = "";
-        var cur = e;
-        for (var i = 0; i < 3 && cur; i++) {
-            var img = cur.select("img").first();
-            if (!img && cur.parent()) img = cur.parent().select("img").first();
-            if (img && !cover) {
-                cover = img.attr('data-src') || img.attr('src');
-                if (cover && !cover.startsWith('http')) cover = 'https://khotruyenchu.sbs' + cover;
-            }
-            var p = cur.select(".excerpt, .entry-summary, .jeg_post_excerpt, p").first();
-            if (p && !desc) desc = p.text();
-            cur = cur.parent();
-        }
-
+    function pushNovel(link, name, cover, desc) {
+        if (!link || link.indexOf("/truyen/") < 0) return;
+        if (seen[link]) return;
+        seen[link] = true;
         data.push({
             name: name,
             link: link,
-            cover: cover,
-            description: desc,
+            cover: cover || "",
+            description: desc || "",
             host: "https://khotruyenchu.sbs"
         });
+    }
+
+    var cards = doc.select("article, .post, .posts .item, .jeg_post");
+    cards.forEach(function (card) {
+        var a = card.select("a[href*='/truyen/']").first();
+        if (!a) return;
+        var link = normalizeUrl(a.attr("href"));
+        var name = getNameFromAnchor(a, link);
+        var img = card.select("img").first();
+        var cover = "";
+        if (img) {
+            cover = img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "";
+            cover = normalizeUrl(cover);
+        }
+        var desc = "";
+        var ex = card.select(".excerpt, .entry-summary, .jeg_post_excerpt, p").first();
+        if (ex) desc = ex.text();
+        pushNovel(link, name, cover, desc);
     });
+
+    if (data.length === 0) {
+        var items = doc.select("a[href*='/truyen/']");
+        items.forEach(function (e) {
+            var link = normalizeUrl(e.attr("href"));
+            if (!link) return;
+            var name = getNameFromAnchor(e, link);
+            var img = e.select("img").first();
+            var cover = "";
+            if (img) {
+                cover = img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "";
+                cover = normalizeUrl(cover);
+            }
+            pushNovel(link, name, cover, "");
+        });
+    }
+
+    for (var j = 0; j < data.length; j++) {
+        if (data[j].cover && data[j].description) continue;
+        try {
+            var r2 = fetch(data[j].link, {
+                headers: {
+                    "user-agent": UserAgent.chrome(),
+                    "referer": searchUrl
+                }
+            });
+            if (!r2.ok) continue;
+            var d2 = r2.html("utf-8");
+            if (!data[j].cover) {
+                var c = d2.select("meta[property='og:image']").attr("content");
+                if (!c) {
+                    var im2 = d2.select(".entry-content img, article img, img").first();
+                    if (im2) c = im2.attr("src");
+                }
+                data[j].cover = normalizeUrl(c || "");
+            }
+            if (!data[j].description) {
+                var de = d2.select("meta[name='description']").attr("content");
+                if (!de) {
+                    var p2 = d2.select(".entry-content p, article p, p").first();
+                    if (p2) de = p2.text();
+                }
+                data[j].description = de || "";
+            }
+        } catch (ignore) {}
+    }
 
     var next = null;
     var expectedNext = "&paged=" + (pageNum + 1);
