@@ -42,8 +42,38 @@ function execute(url, page) {
 
         function normalizeUrl(link) {
             if (!link) return "";
+            if (link.startsWith("//")) return "https:" + link;
             if (!link.startsWith("http")) return "https://khotruyenchu.sbs" + link;
             return link;
+        }
+
+        function pickFromSrcSet(srcset) {
+            if (!srcset) return "";
+            var first = srcset.split(",")[0];
+            if (!first) return "";
+            return first.trim().split(" ")[0] || "";
+        }
+
+        function extractCoverFromImg(img) {
+            if (!img) return "";
+            var c = img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "";
+            if (!c) c = pickFromSrcSet(img.attr("data-srcset") || img.attr("srcset"));
+            return normalizeUrl(c);
+        }
+
+        function extractCoverFromNode(node) {
+            if (!node) return "";
+            var img = node.select("img").first();
+            var c = extractCoverFromImg(img);
+            if (c) return c;
+
+            var styleNode = node.select("[style*='background-image']").first();
+            if (styleNode) {
+                var st = styleNode.attr("style") || "";
+                var m = st.match(/url\((['"]?)([^'")]+)\1\)/i);
+                if (m) return normalizeUrl(m[2]);
+            }
+            return "";
         }
 
         function getNameFromAnchor(a, link) {
@@ -86,11 +116,7 @@ function execute(url, page) {
             var name = getNameFromAnchor(a, link);
 
             var img = card.select("img").first();
-            var cover = "";
-            if (img) {
-                cover = img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "";
-                cover = normalizeUrl(cover);
-            }
+            var cover = extractCoverFromNode(card);
             var desc = "";
             var ex = card.select(".excerpt, .entry-summary, .jeg_post_excerpt, p").first();
             if (ex) desc = ex.text();
@@ -108,18 +134,13 @@ function execute(url, page) {
                 var link2a = normalizeUrl(a2.attr("href"));
                 if (!link2a) continue;
                 var name2a = getNameFromAnchor(a2, link2a);
-                var img2a = a2.select("img").first();
-                var cover2a = "";
-                if (img2a) {
-                    cover2a = img2a.attr("data-src") || img2a.attr("data-lazy-src") || img2a.attr("src") || "";
-                    cover2a = normalizeUrl(cover2a);
-                }
+                var cover2a = extractCoverFromNode(a2);
                 pushNovel(link2a, name2a, cover2a, "");
             }
         }
 
         // Enrich ảnh/mô tả trực tiếp từ trang truyện nếu card list chưa có.
-        var enrichLimit = Math.min(data.length, 10);
+        var enrichLimit = Math.min(data.length, 30);
         for (var j = 0; j < enrichLimit; j++) {
             if (data[j].cover && data[j].description) continue;
             try {
@@ -133,10 +154,8 @@ function execute(url, page) {
                 var d2 = r2.html("utf-8");
                 if (!data[j].cover) {
                     var c = d2.select("meta[property='og:image']").attr("content");
-                    if (!c) {
-                        var im2 = d2.select(".entry-content img, article img, img").first();
-                        if (im2) c = im2.attr("src");
-                    }
+                    if (!c) c = d2.select("meta[name='twitter:image']").attr("content");
+                    if (!c) c = extractCoverFromNode(d2.select(".entry-content, article, .post, body").first());
                     data[j].cover = normalizeUrl(c || "");
                 }
                 if (!data[j].description) {

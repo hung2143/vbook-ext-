@@ -20,8 +20,38 @@ function execute(key, page) {
 
     function normalizeUrl(link) {
         if (!link) return "";
+        if (link.startsWith("//")) return "https:" + link;
         if (!link.startsWith("http")) return "https://khotruyenchu.sbs" + link;
         return link;
+    }
+
+    function pickFromSrcSet(srcset) {
+        if (!srcset) return "";
+        var first = srcset.split(",")[0];
+        if (!first) return "";
+        return first.trim().split(" ")[0] || "";
+    }
+
+    function extractCoverFromImg(img) {
+        if (!img) return "";
+        var c = img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "";
+        if (!c) c = pickFromSrcSet(img.attr("data-srcset") || img.attr("srcset"));
+        return normalizeUrl(c);
+    }
+
+    function extractCoverFromNode(node) {
+        if (!node) return "";
+        var img = node.select("img").first();
+        var c = extractCoverFromImg(img);
+        if (c) return c;
+
+        var styleNode = node.select("[style*='background-image']").first();
+        if (styleNode) {
+            var st = styleNode.attr("style") || "";
+            var m = st.match(/url\((['"]?)([^'")]+)\1\)/i);
+            if (m) return normalizeUrl(m[2]);
+        }
+        return "";
     }
 
     function getNameFromAnchor(a, link) {
@@ -61,12 +91,7 @@ function execute(key, page) {
         if (!a) continue;
         var link = normalizeUrl(a.attr("href"));
         var name = getNameFromAnchor(a, link);
-        var img = card.select("img").first();
-        var cover = "";
-        if (img) {
-            cover = img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "";
-            cover = normalizeUrl(cover);
-        }
+        var cover = extractCoverFromNode(card);
         var desc = "";
         var ex = card.select(".excerpt, .entry-summary, .jeg_post_excerpt, p").first();
         if (ex) desc = ex.text();
@@ -82,17 +107,12 @@ function execute(key, page) {
             var link2 = normalizeUrl(e.attr("href"));
             if (!link2) continue;
             var name2 = getNameFromAnchor(e, link2);
-            var img2 = e.select("img").first();
-            var cover2 = "";
-            if (img2) {
-                cover2 = img2.attr("data-src") || img2.attr("data-lazy-src") || img2.attr("src") || "";
-                cover2 = normalizeUrl(cover2);
-            }
+            var cover2 = extractCoverFromNode(e);
             pushNovel(link2, name2, cover2, "");
         }
     }
 
-    var enrichLimit = Math.min(data.length, 10);
+    var enrichLimit = Math.min(data.length, 30);
     for (var j = 0; j < enrichLimit; j++) {
         if (data[j].cover && data[j].description) continue;
         try {
@@ -106,10 +126,8 @@ function execute(key, page) {
             var d2 = r2.html("utf-8");
             if (!data[j].cover) {
                 var c = d2.select("meta[property='og:image']").attr("content");
-                if (!c) {
-                    var im2 = d2.select(".entry-content img, article img, img").first();
-                    if (im2) c = im2.attr("src");
-                }
+                if (!c) c = d2.select("meta[name='twitter:image']").attr("content");
+                if (!c) c = extractCoverFromNode(d2.select(".entry-content, article, .post, body").first());
                 data[j].cover = normalizeUrl(c || "");
             }
             if (!data[j].description) {
