@@ -15,6 +15,18 @@ function cleanChapterName(name) {
     return n;
 }
 
+function chapterNoFrom(name, href) {
+    var text = (name || "").toLowerCase();
+    var m = text.match(/(?:chuong|chương)\s*0*(\d+)/i);
+    if (m) return parseInt(m[1], 10);
+
+    var u = (href || "").toLowerCase();
+    var m2 = u.match(/\/chuong-0*(\d+)(?:[-\/]|$)/i);
+    if (m2) return parseInt(m2[1], 10);
+
+    return -1;
+}
+
 function collectChapters(doc, result, seen, host) {
     var html = doc.html() || "";
     var added = 0;
@@ -47,7 +59,9 @@ function collectChapters(doc, result, seen, host) {
             result.push({
                 name: name,
                 url: href,
-                host: host
+                host: host,
+                __no: chapterNoFrom(name, href),
+                __idx: result.length
             });
             added++;
         }
@@ -69,7 +83,9 @@ function collectChapters(doc, result, seen, host) {
             result.push({
                 name: name2,
                 url: href2,
-                host: host
+                host: host,
+                __no: chapterNoFrom(name2, href2),
+                __idx: result.length
             });
             added++;
         }
@@ -112,6 +128,21 @@ function execute(url) {
         var d = r.html("utf-8");
         var added = collectChapters(d, data, seen, host);
         if (added === 0) break;
+    }
+
+    // Chuẩn hóa theo thứ tự chương như danh sách chương: ưu tiên số chương tăng dần.
+    data.sort(function (a, b) {
+        var an = a.__no;
+        var bn = b.__no;
+        if (an > 0 && bn > 0 && an !== bn) return an - bn;
+        if (an > 0 && bn <= 0) return -1;
+        if (an <= 0 && bn > 0) return 1;
+        return a.__idx - b.__idx;
+    });
+
+    for (var x = 0; x < data.length; x++) {
+        delete data[x].__no;
+        delete data[x].__idx;
     }
 
     return Response.success(data);
