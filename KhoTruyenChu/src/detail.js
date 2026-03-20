@@ -11,6 +11,7 @@ function execute(url) {
 
     var name = doc.select("h1, h2").first();
     var title = name ? name.text() : doc.select("title").text();
+    title = (title || "").replace(/^\s*bộ\s*truyện\s*/i, "").replace(/\s+/g, " ").trim();
 
     var cover = doc.select("meta[property='og:image']").attr("content");
     if (!cover) cover = doc.select(".entry-content img, article img, img").first().attr("src");

@@ -6,7 +6,7 @@ function normalizeUrl(href, host) {
 
 function chapterNoFrom(name, href) {
     var text = (name || "").toLowerCase();
-    var m = text.match(/chuong\s*0*(\d+)/i);
+    var m = text.match(/(?:chuong|chương)\s*0*(\d+)/i);
     if (m) return parseInt(m[1], 10);
 
     var url = (href || "").toLowerCase();
@@ -33,7 +33,7 @@ function upsertChapter(resultByNo, no, name, href, host) {
     }
 
     // Ưu tiên tiêu đề bắt đầu bằng "Chương <số>" để khớp format danh sách chương.
-    var preferred = new RegExp("^\\s*chuong\\s*0*" + no + "\\b", "i");
+    var preferred = new RegExp("^\\s*(?:chuong|chương)\\s*0*" + no + "\\b", "i");
     var oldName = resultByNo[no].name || "";
     var oldPreferred = preferred.test(oldName);
     var newPreferred = preferred.test(name || "");
@@ -167,6 +167,29 @@ function execute(url) {
     });
 
     for (var x = 0; x < data.length; x++) {
+        if (x === 0 && /đọc\s*từ\s*đầu/i.test(data[x].name || "")) {
+            // Nếu mục đầu bị gán nhãn "Đọc Từ Đầu", đổi về tên chương 1 thật.
+            try {
+                var r1 = fetch(data[x].url, {
+                    headers: {
+                        "user-agent": UserAgent.chrome(),
+                        "referer": host + "/"
+                    }
+                });
+                if (r1.ok) {
+                    var d1 = r1.html("utf-8");
+                    var chapTitle = d1.select("h1, h2, .entry-title").first();
+                    var chapName = chapTitle ? chapTitle.text() : "";
+                    chapName = (chapName || "").replace(/\s+/g, " ").trim();
+                    if (chapName) data[x].name = chapName;
+                    else data[x].name = "Chương 1";
+                } else {
+                    data[x].name = "Chương 1";
+                }
+            } catch (ignore) {
+                data[x].name = "Chương 1";
+            }
+        }
         delete data[x].__no;
     }
 
