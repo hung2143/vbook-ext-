@@ -32,8 +32,31 @@ function execute(url) {
     if (!response.ok) return null;
 
     var doc = response.html("utf-8");
-    var content = doc.select(".entry-content, article .entry-content, .post-content, .content-inner").first();
-    var html = content ? content.html() : doc.html();
+    var html = "";
+
+    // Ưu tiên ghép từ các đoạn văn để tránh dính menu/điều hướng.
+    var paragraphs = doc.select(".entry-content p, article .entry-content p, .post-content p, article p");
+    var parts = [];
+    for (var i = 0; i < paragraphs.size(); i++) {
+        var p = paragraphs.get(i);
+        var text = (p.text() || "").replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        if (/^(?:≣\s*)?mục\s*lục$/i.test(text)) continue;
+        if (/^chương\s*(?:trước|sau)/i.test(text)) continue;
+        if (/^cỡ\s*chữ\s*:?$/i.test(text)) continue;
+        if (/^a[+-]$/i.test(text)) continue;
+        if (/^giao\s*diện$/i.test(text)) continue;
+        if (/^(subscribe|login)$/i.test(text)) continue;
+        parts.push("<p>" + p.html() + "</p>");
+    }
+
+    if (parts.length >= 5) {
+        html = parts.join("\n");
+    } else {
+        var content = doc.select(".entry-content, article .entry-content, .post-content, .content-inner").first();
+        html = content ? content.html() : doc.html();
+    }
+
     html = cleanHtml(html);
 
     return Response.success(html);

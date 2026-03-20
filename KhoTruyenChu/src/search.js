@@ -35,7 +35,10 @@ function execute(key, page) {
             var slug = link.split('/').filter(Boolean).pop();
             name = decodeURIComponent(slug.replace(/-/g, ' '));
         }
-        return (name || "").replace(/\s+/g, " ").trim();
+        return (name || "")
+            .replace(/^\s*bộ\s*truyện\s*/i, "")
+            .replace(/\s+/g, " ")
+            .trim();
     }
 
     function pushNovel(link, name, cover, desc) {

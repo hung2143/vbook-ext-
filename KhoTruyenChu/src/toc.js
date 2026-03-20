@@ -166,30 +166,30 @@ function execute(url) {
         return a.__no - b.__no;
     });
 
-    for (var x = 0; x < data.length; x++) {
-        if (x === 0 && /đọc\s*từ\s*đầu/i.test(data[x].name || "")) {
-            // Nếu mục đầu bị gán nhãn "Đọc Từ Đầu", đổi về tên chương 1 thật.
-            try {
-                var r1 = fetch(data[x].url, {
-                    headers: {
-                        "user-agent": UserAgent.chrome(),
-                        "referer": host + "/"
-                    }
-                });
-                if (r1.ok) {
-                    var d1 = r1.html("utf-8");
-                    var chapTitle = d1.select("h1, h2, .entry-title").first();
-                    var chapName = chapTitle ? chapTitle.text() : "";
-                    chapName = (chapName || "").replace(/\s+/g, " ").trim();
-                    if (chapName) data[x].name = chapName;
-                    else data[x].name = "Chương 1";
-                } else {
-                    data[x].name = "Chương 1";
+    // Luôn chuẩn hóa tên chương 1 theo title thật của trang chương để tránh hiện "Đọc Từ Đầu".
+    if (data.length > 0 && data[0].__no === 1) {
+        try {
+            var r1 = fetch(data[0].url, {
+                headers: {
+                    "user-agent": UserAgent.chrome(),
+                    "referer": host + "/"
                 }
-            } catch (ignore) {
-                data[x].name = "Chương 1";
+            });
+            if (r1.ok) {
+                var d1 = r1.html("utf-8");
+                var chapTitle = d1.select("h1, h2, .entry-title").first();
+                var chapName = chapTitle ? chapTitle.text() : "";
+                chapName = (chapName || "").replace(/\s+/g, " ").trim();
+                data[0].name = chapName || "Chương 1";
+            } else {
+                data[0].name = "Chương 1";
             }
+        } catch (ignore) {
+            data[0].name = "Chương 1";
         }
+    }
+
+    for (var x = 0; x < data.length; x++) {
         delete data[x].__no;
     }
 
