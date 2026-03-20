@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "author": "Hung",
+    "description": "Danh sách plugin",
+    "source": "https://github.com/hung2143/vbook-ext-"
+  },
+  "data": [
+    {
+      "name": "Trang Truyện",
+      "author": "Hung",
+      "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/TrangTruyen/plugin.zip",
+      "version": 1,
+      "source": "https://trangtruyen.site/",
+      "icon": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/TrangTruyen/icon.png",
+      "description": "Đọc truyện trên trang https://trangtruyen.site/",
+      "type": "novel",
+      "locale": "vn_VI"
+    }
+  ]
+}
