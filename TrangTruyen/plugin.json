@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "name": "Trang Truyện",
+    "author": "Hung",
+    "version": 1,
+    "source": "https://trangtruyen.site/",
+    "regexp": "(www\\.)?trangtruyen\\.site/(stories|read)/.+",
+    "description": "Đọc truyện trên trang https://trangtruyen.site/",
+    "locale": "vn_VI",
+    "language": "javascript",
+    "type": "novel"
+  },
+  "script": {
+    "home": "home.js",
+    "detail": "detail.js",
+    "toc": "toc.js",
+    "chap": "chap.js",
+    "search": "search.js"
+  }
+}
