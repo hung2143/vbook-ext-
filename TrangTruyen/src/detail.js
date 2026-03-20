@@ -1,5 +1,10 @@
 function execute(url) {
-    var response = fetch(url);
+    var response = fetch(url, {
+        headers: {
+            'user-agent': UserAgent.chrome(),
+            'referer': 'https://trangtruyen.site/'
+        }
+    });
     if (!response.ok) return null;
 
     var doc = response.html('utf-8');

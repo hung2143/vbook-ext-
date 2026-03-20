@@ -1,7 +1,12 @@
 function execute(key, page) {
     if (!page) page = '1';
     var searchUrl = 'https://trangtruyen.site/tim-kiem?word=' + encodeURIComponent(key) + '&page=' + page;
-    var response = fetch(searchUrl);
+    var response = fetch(searchUrl, {
+        headers: {
+            'user-agent': UserAgent.chrome(),
+            'referer': 'https://trangtruyen.site/'
+        }
+    });
     if (!response.ok) return null;
 
     var doc = response.html('utf-8');

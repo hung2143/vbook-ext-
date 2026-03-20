@@ -5,7 +5,12 @@ function execute(url, page) {
     try {
         if (!page) page = '1';
         var listUrl = url + page;
-        var response = fetch(listUrl);
+        var response = fetch(listUrl, {
+            headers: {
+                'user-agent': UserAgent.chrome(),
+                'referer': 'https://trangtruyen.site/'
+            }
+        });
         if (!response.ok) {
             return Response.success([{
                 name: 'TrangTruyen: fetch lỗi',
