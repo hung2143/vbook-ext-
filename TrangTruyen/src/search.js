@@ -29,6 +29,29 @@ function execute(key, page) {
         });
     });
 
+    // Fallback regex nếu DOM khác bản desktop.
+    if (data.length === 0) {
+        var html = doc.html();
+        var regex = /https:\/\/trangtruyen\.site\/stories\/[^"'>\s]+/g;
+        var m;
+        while ((m = regex.exec(html)) !== null) {
+            var link2 = m[0];
+            if (seen[link2]) continue;
+            seen[link2] = true;
+
+            var slug = link2.split('/').pop();
+            var name2 = decodeURIComponent(slug.replace(/-/g, ' '));
+
+            data.push({
+                name: name2,
+                link: link2,
+                cover: '',
+                description: '',
+                host: 'https://trangtruyen.site'
+            });
+        }
+    }
+
     var next = null;
     return Response.success(data, next);
 }
