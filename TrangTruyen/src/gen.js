@@ -31,7 +31,9 @@ function execute(url, page) {
 
         // Trên trang /stories, các truyện đều có link dạng
         // https://trangtruyen.site/stories/slug-...
-        var items = doc.select("a[href^='https://trangtruyen.site/stories/'], a[href^='/stories/']");
+        // Dùng contains (*=) thay vì starts-with (^=) để tránh
+        // khác biệt nhỏ về URL giữa các phiên bản (http/https, tham số...).
+        var items = doc.select("a[href*='/stories/']");
 
         var seen = {};
         items.forEach(function (a) {

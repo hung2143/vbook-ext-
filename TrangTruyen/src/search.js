@@ -8,7 +8,9 @@ function execute(key, page) {
 
     var data = [];
 
-    var items = doc.select("a[href^='https://trangtruyen.site/stories/'], a[href^='/stories/']");
+    // Bắt mọi link có chứa '/stories/' để tránh bỏ sót
+    // do khác nhau giữa http/https hoặc query string.
+    var items = doc.select("a[href*='/stories/']");
     var seen = {};
     items.forEach(function (e) {
         var link = e.attr('href');
