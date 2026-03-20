@@ -48,7 +48,8 @@ function collectChapters(doc, result, seen, host) {
         }
         var scoped = part.substring(0, cut);
 
-        var re = /<a[^>]+href=["']([^"']*\/chuong[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+        // Ưu tiên đúng cấu trúc chapter list: h2 chứa link chương.
+        var re = /<h2[^>]*>[\s\S]*?<a[^>]+href=["']([^"']*\/chuong[^"']*)["'][^>]*>([\s\S]*?)<\/a>[\s\S]*?<\/h2>/gi;
         var m;
         while ((m = re.exec(scoped)) !== null) {
             var href = normalizeUrl(m[1], host);
@@ -64,6 +65,27 @@ function collectChapters(doc, result, seen, host) {
                 __idx: result.length
             });
             added++;
+        }
+
+        // Fallback trong đúng section: lấy link chương bất kỳ nếu site đổi từ h2 sang layout khác.
+        if (added < 5) {
+            var re2 = /<a[^>]+href=["']([^"']*\/chuong[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+            var m2;
+            while ((m2 = re2.exec(scoped)) !== null) {
+                var hrefx = normalizeUrl(m2[1], host);
+                if (!hrefx || seen[hrefx]) continue;
+                var namex = cleanChapterName(stripTags(m2[2]));
+                if (!namex) continue;
+                seen[hrefx] = true;
+                result.push({
+                    name: namex,
+                    url: hrefx,
+                    host: host,
+                    __no: chapterNoFrom(namex, hrefx),
+                    __idx: result.length
+                });
+                added++;
+            }
         }
     }
 
