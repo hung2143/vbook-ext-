@@ -75,9 +75,10 @@ function execute(url, page) {
 
         // Ưu tiên parse theo card để lấy được ảnh/mô tả rõ ràng hơn.
         var cards = doc.select("article, .post, .posts .item, .jeg_post");
-        cards.forEach(function (card) {
+        for (var i = 0; i < cards.size(); i++) {
+            var card = cards.get(i);
             var a = card.select("a[href*='/truyen/']").first();
-            if (!a) return;
+            if (!a) continue;
             var link = normalizeUrl(a.attr("href"));
             var name = getNameFromAnchor(a, link);
 
@@ -92,27 +93,29 @@ function execute(url, page) {
             if (ex) desc = ex.text();
 
             pushNovel(link, name, cover, desc);
-        });
+        }
 
         // Fallback: lấy toàn bộ anchor truyện.
         if (data.length === 0) {
             var items = doc.select("a[href*='/truyen/']");
-            items.forEach(function (a) {
-                var link = normalizeUrl(a.attr("href"));
-                if (!link) return;
-                var name = getNameFromAnchor(a, link);
-                var img = a.select("img").first();
-                var cover = "";
-                if (img) {
-                    cover = img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "";
-                    cover = normalizeUrl(cover);
+            for (var k = 0; k < items.size(); k++) {
+                var a2 = items.get(k);
+                var link2a = normalizeUrl(a2.attr("href"));
+                if (!link2a) continue;
+                var name2a = getNameFromAnchor(a2, link2a);
+                var img2a = a2.select("img").first();
+                var cover2a = "";
+                if (img2a) {
+                    cover2a = img2a.attr("data-src") || img2a.attr("data-lazy-src") || img2a.attr("src") || "";
+                    cover2a = normalizeUrl(cover2a);
                 }
-                pushNovel(link, name, cover, "");
-            });
+                pushNovel(link2a, name2a, cover2a, "");
+            }
         }
 
         // Enrich ảnh/mô tả trực tiếp từ trang truyện nếu card list chưa có.
-        for (var j = 0; j < data.length; j++) {
+        var enrichLimit = Math.min(data.length, 10);
+        for (var j = 0; j < enrichLimit; j++) {
             if (data[j].cover && data[j].description) continue;
             try {
                 var r2 = fetch(data[j].link, {
@@ -170,7 +173,8 @@ function execute(url, page) {
         var hasNext = doc.select("a[href*='" + expectedNext + "']").size() > 0;
         if (!hasNext) {
             // Fallback: tìm nút phân trang có rel="next" hoặc text "Sau".
-            hasNext = doc.select("a[rel='next'], a:matchesOwn((?i)sau|next)").size() > 0;
+            hasNext = doc.select("a[rel='next']").size() > 0;
+            if (!hasNext) hasNext = doc.html().toLowerCase().indexOf("sau") !== -1;
         }
         if (hasNext && data.length > 0) next = nextPageNum.toString();
 

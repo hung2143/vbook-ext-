@@ -52,9 +52,10 @@ function execute(key, page) {
     }
 
     var cards = doc.select("article, .post, .posts .item, .jeg_post");
-    cards.forEach(function (card) {
+    for (var i = 0; i < cards.size(); i++) {
+        var card = cards.get(i);
         var a = card.select("a[href*='/truyen/']").first();
-        if (!a) return;
+        if (!a) continue;
         var link = normalizeUrl(a.attr("href"));
         var name = getNameFromAnchor(a, link);
         var img = card.select("img").first();
@@ -67,25 +68,27 @@ function execute(key, page) {
         var ex = card.select(".excerpt, .entry-summary, .jeg_post_excerpt, p").first();
         if (ex) desc = ex.text();
         pushNovel(link, name, cover, desc);
-    });
+    }
 
     if (data.length === 0) {
         var items = doc.select("a[href*='/truyen/']");
-        items.forEach(function (e) {
-            var link = normalizeUrl(e.attr("href"));
-            if (!link) return;
-            var name = getNameFromAnchor(e, link);
-            var img = e.select("img").first();
-            var cover = "";
-            if (img) {
-                cover = img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "";
-                cover = normalizeUrl(cover);
+        for (var k = 0; k < items.size(); k++) {
+            var e = items.get(k);
+            var link2 = normalizeUrl(e.attr("href"));
+            if (!link2) continue;
+            var name2 = getNameFromAnchor(e, link2);
+            var img2 = e.select("img").first();
+            var cover2 = "";
+            if (img2) {
+                cover2 = img2.attr("data-src") || img2.attr("data-lazy-src") || img2.attr("src") || "";
+                cover2 = normalizeUrl(cover2);
             }
-            pushNovel(link, name, cover, "");
-        });
+            pushNovel(link2, name2, cover2, "");
+        }
     }
 
-    for (var j = 0; j < data.length; j++) {
+    var enrichLimit = Math.min(data.length, 10);
+    for (var j = 0; j < enrichLimit; j++) {
         if (data[j].cover && data[j].description) continue;
         try {
             var r2 = fetch(data[j].link, {
