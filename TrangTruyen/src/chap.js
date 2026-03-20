@@ -43,10 +43,9 @@ function plainTextToHtml(text) {
 function isCipherLikeContent(html) {
     var s = htmlToText(html || "").replace(/\s+/g, " ").trim();
     if (!s || s.length < 40) return false;
-    if (/^\{\s*"v"\s*:\s*\d+/i.test(s) && /"l2"\s*:/i.test(s)) return true;
-    if (/^\{\s*"v"\s*:\s*\d+/i.test(s) && /[A-Za-z0-9+/=]{80,}/.test(s)) return true;
-    if (/^\{\s*"v"\s*:\s*\d+\s*,\s*"l2"\s*:/i.test(s)) return true;
-    if (/^\{\s*"v"\s*:\s*\d+\s*,/i.test(s) && /[A-Za-z0-9+/=]{200,}/.test(s)) return true;
+    if (/"v"\s*:\s*\d+/i.test(s) && /"l2"\s*:/i.test(s) && /[A-Za-z0-9+/=]{120,}/.test(s)) return true;
+    if (/\{[^{}]*"v"\s*:\s*\d+[^{}]*"l2"\s*:/i.test(s) && /[A-Za-z0-9+/=]{120,}/.test(s)) return true;
+    if (/"l2"\s*:\s*"[A-Za-z0-9+/=]{200,}"/i.test(s)) return true;
     return false;
 }
 
