@@ -9,8 +9,50 @@ function cleanText(s) {
     return (s || "").replace(/\s+/g, " ").trim();
 }
 
+function extractSlug(url) {
+    var m = (url || "").match(/\/stories\/([^\/?#]+)/i);
+    return m ? m[1] : "";
+}
+
 function execute(url) {
     try {
+        var slug = extractSlug(url);
+        if (slug) {
+            var apiResponse = fetch("https://trangtruyen.site/api/stories/" + slug, {
+                headers: {
+                    "user-agent": UserAgent.chrome(),
+                    "referer": "https://trangtruyen.site/"
+                }
+            });
+
+            if (apiResponse.ok) {
+                var apiJson = apiResponse.json();
+                var story = apiJson ? apiJson.story : null;
+                if (story) {
+                    var category = "";
+                    if (story.categories && story.categories.length) {
+                        category = story.categories.join(", ");
+                    }
+
+                    var status = story.status || "";
+                    var detailLines = [];
+                    if (story.author) detailLines.push("Tác giả: " + story.author);
+                    if (category) detailLines.push("Thể loại: " + category);
+                    if (status) detailLines.push("Trạng thái: " + status);
+
+                    return Response.success({
+                        name: story.title || "Không rõ tiêu đề",
+                        cover: normalizeUrl(story.coverImage || ""),
+                        author: story.author || "",
+                        description: story.description || (story.title || ""),
+                        detail: detailLines.join("<br>"),
+                        ongoing: status ? !/hoàn|complete|completed/i.test(status) : true,
+                        host: "https://trangtruyen.site"
+                    });
+                }
+            }
+        }
+
         var response = fetch(url, {
             headers: {
                 "user-agent": UserAgent.chrome(),

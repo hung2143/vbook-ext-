@@ -5,23 +5,12 @@ function normalizeUrl(link) {
     return link;
 }
 
-function safeDecodeSlug(link) {
-    try {
-        var slug = (link || "").split("/");
-        slug = slug[slug.length - 1] || "";
-        return decodeURIComponent(slug.replace(/-/g, " "));
-    } catch (e) {
-        return (link || "").replace(/-/g, " ");
-    }
-}
-
 function execute(key, page) {
     try {
-        if (!page) page = "1";
-        var pageNum = parseInt(page, 10);
+        var pageNum = parseInt(page || "1", 10);
         if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
 
-        var searchUrl = "https://trangtruyen.site/tim-kiem?word=" + encodeURIComponent(key) + "&page=" + pageNum;
+        var searchUrl = "https://trangtruyen.site/api/stories?q=" + encodeURIComponent(key || "") + "&page=" + pageNum;
         var response = fetch(searchUrl, {
             headers: {
                 "user-agent": UserAgent.chrome(),
@@ -30,53 +19,26 @@ function execute(key, page) {
         });
         if (!response.ok) return Response.success([], null);
 
-        var doc = response.html("utf-8");
+        var json = response.json();
+        var items = (json && json.items) ? json.items : [];
         var data = [];
-        var seen = {};
 
-        var items = doc.select("a[href*='/stories/']");
-        for (var i = 0; i < items.size(); i++) {
-            var e = items.get(i);
-            var link = normalizeUrl(e.attr("href"));
-            if (!link || seen[link]) continue;
-            if (link.indexOf("/stories/") < 0) continue;
-
-            seen[link] = true;
-            var name = (e.text() || e.attr("title") || "").replace(/\s+/g, " ").trim();
-            if (!name) name = safeDecodeSlug(link);
-
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i] || {};
+            if (!it.slug) continue;
             data.push({
-                name: name,
-                link: link,
-                cover: "",
-                description: "",
+                name: it.title || it.slug,
+                link: "https://trangtruyen.site/stories/" + it.slug,
+                cover: normalizeUrl(it.coverImage || ""),
+                description: it.author ? ("Tác giả: " + it.author) : "",
                 host: "https://trangtruyen.site"
             });
         }
 
-        if (data.length === 0) {
-            var html = doc.html() || "";
-            var regex = /(https:\/\/trangtruyen\.site\/stories\/[^"'>\s]+|\/stories\/[^"'>\s]+)/g;
-            var m;
-            while ((m = regex.exec(html)) !== null) {
-                var link2 = normalizeUrl(m[0]);
-                if (!link2 || seen[link2]) continue;
-                seen[link2] = true;
-
-                data.push({
-                    name: safeDecodeSlug(link2),
-                    link: link2,
-                    cover: "",
-                    description: "",
-                    host: "https://trangtruyen.site"
-                });
-            }
-        }
-
         var next = null;
-        var htmlLower = (doc.html() || "").toLowerCase();
-        if (htmlLower.indexOf("page=" + (pageNum + 1)) !== -1 && data.length > 0) {
-            next = (pageNum + 1).toString();
+        var p = json ? json.pagination : null;
+        if (p && p.page && p.totalPages && p.page < p.totalPages) {
+            next = (p.page + 1).toString();
         }
 
         return Response.success(data, next);
