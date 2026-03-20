@@ -17,15 +17,12 @@ function normalizeNameKey(name) {
     var n = (name || "").toLowerCase().replace(/\s+/g, " ").trim();
     if (!n) return "";
 
-    // Ưu tiên key theo số chương để loại các bản trùng URL khác nhau ở trang cuối.
+    // Chỉ dedupe theo số cho mục "Chương N".
+    // Các mục đặc biệt (ngoại truyện/phiên ngoại/hậu ký...) dedupe theo URL để tránh rớt chương.
     var m = n.match(/^(?:chương|chuong)\s*(\d+)/i);
     if (m) return "c:" + m[1];
 
-    if (/^(?:ngoại\s*truyện|ngoai\s*truyen)/i.test(n)) {
-        return "e:" + n.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
-    }
-
-    return "t:" + n.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+    return "";
 }
 
 function extractChapterNumber(name) {
