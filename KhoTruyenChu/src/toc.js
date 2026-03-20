@@ -4,10 +4,6 @@ function normalizeUrl(href, host) {
     return href;
 }
 
-function stripTags(text) {
-    return (text || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-}
-
 function cleanChapterName(name) {
     var n = (name || "").replace(/\s+/g, " ").trim();
     if (/^đọc\s*từ\s*đầu$/i.test(n)) return "";
@@ -15,99 +11,47 @@ function cleanChapterName(name) {
     return n;
 }
 
-function chapterNoFrom(name, href) {
-    var text = (name || "").toLowerCase();
-    var m = text.match(/(?:chuong|chương)\s*0*(\d+)/i);
-    if (m) return parseInt(m[1], 10);
-
-    var u = (href || "").toLowerCase();
-    var m2 = u.match(/\/chuong-0*(\d+)(?:[-\/]|$)/i);
-    if (m2) return parseInt(m2[1], 10);
-
-    return -1;
-}
-
 function collectChapters(doc, result, seen, host) {
-    var html = doc.html() || "";
     var added = 0;
 
-    // Ưu tiên parse phần HTML sau tiêu đề "Danh sách chương" để tránh lẫn các khối khác.
-    var start = html.indexOf("Danh sách chương");
-    if (start < 0) start = html.indexOf("Danh Sách Chương");
-    if (start >= 0) {
-        var part = html.substring(start);
+    // Lấy đúng phần danh sách chương: các card chapter trong thẻ h2.
+    var chapterNodes = doc.select("h2 a[href*='/chuong-']");
+    for (var i = 0; i < chapterNodes.size(); i++) {
+        var a = chapterNodes.get(i);
+        var href = normalizeUrl(a.attr("href"), host);
+        if (!href || seen[href]) continue;
 
-        // Cắt tại khối phân trang hoặc phần bình luận để giới hạn vùng parse.
-        var endMarkers = ["pagination", "page-numbers", "nav-links", "comments", "Bình luận", "Related", "Footer"];
-        var cut = part.length;
-        var lowerPart = part.toLowerCase();
-        for (var e = 0; e < endMarkers.length; e++) {
-            var marker = endMarkers[e].toLowerCase();
-            var idx = lowerPart.indexOf(marker);
-            if (idx > 0 && idx < cut) cut = idx;
-        }
-        var scoped = part.substring(0, cut);
+        var name = cleanChapterName(a.text() || a.attr("title"));
+        if (!name) continue;
 
-        // Ưu tiên đúng cấu trúc chapter list: h2 chứa link chương.
-        var re = /<h2[^>]*>[\s\S]*?<a[^>]+href=["']([^"']*\/chuong[^"']*)["'][^>]*>([\s\S]*?)<\/a>[\s\S]*?<\/h2>/gi;
-        var m;
-        while ((m = re.exec(scoped)) !== null) {
-            var href = normalizeUrl(m[1], host);
-            if (!href || seen[href]) continue;
-            var name = cleanChapterName(stripTags(m[2]));
-            if (!name) continue;
-            seen[href] = true;
-            result.push({
-                name: name,
-                url: href,
-                host: host,
-                __no: chapterNoFrom(name, href),
-                __idx: result.length
-            });
-            added++;
-        }
-
-        // Fallback trong đúng section: lấy link chương bất kỳ nếu site đổi từ h2 sang layout khác.
-        if (added < 5) {
-            var re2 = /<a[^>]+href=["']([^"']*\/chuong[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
-            var m2;
-            while ((m2 = re2.exec(scoped)) !== null) {
-                var hrefx = normalizeUrl(m2[1], host);
-                if (!hrefx || seen[hrefx]) continue;
-                var namex = cleanChapterName(stripTags(m2[2]));
-                if (!namex) continue;
-                seen[hrefx] = true;
-                result.push({
-                    name: namex,
-                    url: hrefx,
-                    host: host,
-                    __no: chapterNoFrom(namex, hrefx),
-                    __idx: result.length
-                });
-                added++;
-            }
-        }
+        seen[href] = true;
+        result.push({
+            name: name,
+            url: href,
+            host: host
+        });
+        added++;
     }
 
-    // Fallback bằng selector DOM nếu parse theo section không đủ dữ liệu.
+    // Fallback nhẹ: nếu theme đổi từ h2 sang card/div nhưng vẫn là link /chuong-.
     if (added < 5) {
-        var nodes = doc.select("a[href*='/chuong']");
-        for (var i = 0; i < nodes.size(); i++) {
-            var a = nodes.get(i);
-            var href2 = normalizeUrl(a.attr("href"), host);
+        var fallbackNodes = doc.select(".entry-content a[href*='/chuong-'], article a[href*='/chuong-']");
+        for (var j = 0; j < fallbackNodes.size(); j++) {
+            var b = fallbackNodes.get(j);
+            var href2 = normalizeUrl(b.attr("href"), host);
             if (!href2 || seen[href2]) continue;
 
-            var name2 = a.text();
-            if (!name2) name2 = a.attr("title");
-            name2 = cleanChapterName(name2);
+            var name2 = cleanChapterName(b.text() || b.attr("title"));
             if (!name2) continue;
+
+            // Chỉ nhận link có title giống chương, tránh "Đọc Từ Đầu/Chương Mới Nhất".
+            if (!/(?:chuong|chương)\s*\d+/i.test(name2)) continue;
+
             seen[href2] = true;
             result.push({
                 name: name2,
                 url: href2,
-                host: host,
-                __no: chapterNoFrom(name2, href2),
-                __idx: result.length
+                host: host
             });
             added++;
         }
@@ -150,21 +94,6 @@ function execute(url) {
         var d = r.html("utf-8");
         var added = collectChapters(d, data, seen, host);
         if (added === 0) break;
-    }
-
-    // Chuẩn hóa theo thứ tự chương như danh sách chương: ưu tiên số chương tăng dần.
-    data.sort(function (a, b) {
-        var an = a.__no;
-        var bn = b.__no;
-        if (an > 0 && bn > 0 && an !== bn) return an - bn;
-        if (an > 0 && bn <= 0) return -1;
-        if (an <= 0 && bn > 0) return 1;
-        return a.__idx - b.__idx;
-    });
-
-    for (var x = 0; x < data.length; x++) {
-        delete data[x].__no;
-        delete data[x].__idx;
     }
 
     return Response.success(data);
