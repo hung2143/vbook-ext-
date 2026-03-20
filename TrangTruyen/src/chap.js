@@ -41,10 +41,12 @@ function plainTextToHtml(text) {
 }
 
 function isCipherLikeContent(html) {
-    var s = (html || "").replace(/\s+/g, " ").trim();
+    var s = htmlToText(html || "").replace(/\s+/g, " ").trim();
     if (!s || s.length < 40) return false;
     if (/^\{\s*"v"\s*:\s*\d+/i.test(s) && /"l2"\s*:/i.test(s)) return true;
     if (/^\{\s*"v"\s*:\s*\d+/i.test(s) && /[A-Za-z0-9+/=]{80,}/.test(s)) return true;
+    if (/^\{\s*"v"\s*:\s*\d+\s*,\s*"l2"\s*:/i.test(s)) return true;
+    if (/^\{\s*"v"\s*:\s*\d+\s*,/i.test(s) && /[A-Za-z0-9+/=]{200,}/.test(s)) return true;
     return false;
 }
 
@@ -136,7 +138,7 @@ function execute(url) {
         }
 
         var textOnly = (doc.text() || "").replace(/\s+/g, " ").trim();
-        if (textOnly && textOnly.length > 60 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(textOnly)) {
+        if (textOnly && textOnly.length > 60 && !isCipherLikeContent(textOnly) && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(textOnly)) {
             return Response.success(plainTextToHtml(textOnly));
         }
 
