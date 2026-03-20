@@ -29,6 +29,16 @@ function splitParagraphs(text) {
     return out;
 }
 
+function canUseJavaCrypto() {
+    try {
+        Java.type("java.security.MessageDigest");
+        Java.type("javax.crypto.Cipher");
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
 function paragraphsToHtml(paragraphs) {
     if (!paragraphs || !paragraphs.length) return "";
     var html = [];
@@ -214,6 +224,7 @@ function normalizeParagraphs(payload) {
 }
 
 function tryDecryptCipherContent(chapterId, encryptedJson, contentMeta) {
+    if (!canUseJavaCrypto()) return "";
     if (!chapterId || !encryptedJson || !contentMeta) return "";
 
     var enc;
@@ -336,9 +347,13 @@ function execute(url) {
         }
 
         if (apiHtml && isCipherLikeContent(apiHtml) && apiRes && apiRes.contentMetaV2) {
-            var decrypted = tryDecryptCipherContent(apiRes.chapterId, apiHtml, apiRes.contentMetaV2);
-            if (decrypted && decrypted.length > 20) {
-                return Response.success(decrypted);
+            try {
+                var decrypted = tryDecryptCipherContent(apiRes.chapterId, apiHtml, apiRes.contentMetaV2);
+                if (decrypted && decrypted.length > 20) {
+                    return Response.success(decrypted);
+                }
+            } catch (_) {
+                // Keep falling through to HTML fallback instead of failing chapter load.
             }
         }
 
