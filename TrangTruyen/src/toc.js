@@ -50,29 +50,20 @@ function listFromApi(url) {
     if (!storyId) return [];
 
     var data = [];
-    var page = 1;
-    var safety = 0;
-    while (safety < 200) {
-        safety += 1;
-        var chapterPage = fetchJson("https://trangtruyen.site/api/stories/" + storyId + "/chapters?page=" + page);
-        if (!chapterPage || !chapterPage.items || chapterPage.items.length === 0) break;
+    var chapterPage = fetchJson("https://trangtruyen.site/api/stories/" + storyId + "/chapters?page=1&limit=2000");
+    if (!chapterPage || !chapterPage.items || chapterPage.items.length === 0) return data;
 
-        var items = chapterPage.items;
-        for (var i = 0; i < items.length; i++) {
-            var it = items[i] || {};
-            if (!it.id) continue;
+    var items = chapterPage.items;
+    for (var i = 0; i < items.length; i++) {
+        var it = items[i] || {};
+        if (!it.id) continue;
 
-            var name = (it.title || ("Chương " + (it.chapterNumber || (data.length + 1)))).replace(/\s+/g, " ").trim();
-            data.push({
-                name: name,
-                url: "https://trangtruyen.site/read/" + it.id,
-                host: "https://trangtruyen.site"
-            });
-        }
-
-        var p = chapterPage.pagination || null;
-        if (!p || !p.page || !p.totalPages || p.page >= p.totalPages) break;
-        page += 1;
+        var name = (it.title || ("Chương " + (it.chapterNumber || (data.length + 1)))).replace(/\s+/g, " ").trim();
+        data.push({
+            name: name,
+            url: "https://trangtruyen.site/read/" + it.id,
+            host: "https://trangtruyen.site"
+        });
     }
 
     return data;

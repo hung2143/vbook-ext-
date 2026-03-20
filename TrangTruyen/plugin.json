@@ -2,9 +2,9 @@
   "metadata": {
     "name": "Trang Truyện",
     "author": "Hung",
-    "version": 8,
+    "version": 9,
     "source": "https://trangtruyen.site/",
-    "regexp": "(www\\.)?trangtruyen\\.site/(stories/[^/?#]+/?|read/[A-Za-z0-9]+/?)(\\?.*)?$",
+    "regexp": "(www\\.)?trangtruyen\\.site/(stories/[^/?#]+/?|read/[^/?#]+/?)(\\?.*)?$",
     "description": "Đọc truyện trên trang https://trangtruyen.site/",
     "locale": "vn_VI",
     "language": "javascript",

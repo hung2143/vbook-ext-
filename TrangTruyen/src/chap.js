@@ -25,16 +25,19 @@ function tryApiContent(url) {
     if (!response.ok) return "";
 
     var json = response.json();
-    if (!json || !json.chapter) return "";
+    if (!json || !json.chapter) return { content: "", requireLogin: false };
 
     var content = json.chapter.content || "";
-    if (!content) return "";
-    return cleanHtml(content);
+    return {
+        content: content ? cleanHtml(content) : "",
+        requireLogin: !!json.requireLogin
+    };
 }
 
 function execute(url) {
     try {
-        var apiHtml = tryApiContent(url);
+        var apiRes = tryApiContent(url);
+        var apiHtml = apiRes && apiRes.content ? apiRes.content : "";
         if (apiHtml && apiHtml.length > 80) {
             return Response.success(apiHtml);
         }
@@ -67,7 +70,8 @@ function execute(url) {
         if (!html) html = doc.html() || "";
         html = cleanHtml(html);
 
-        if (/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test((doc.text() || ""))) {
+        var text = doc.text() || "";
+        if (/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(text) || (apiRes && apiRes.requireLogin && (!html || html.length < 80))) {
             return null;
         }
 
