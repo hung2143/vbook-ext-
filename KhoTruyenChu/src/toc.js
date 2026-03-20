@@ -16,34 +16,88 @@ function chapterNoFrom(name, href) {
     return -1;
 }
 
-function collectChapters(doc, seen, host) {
-    var list = [];
-    var nodes = doc.select("a[href*='/chuong']");
-    for (var i = 0; i < nodes.size(); i++) {
-        var a = nodes.get(i);
-        var href = normalizeUrl(a.attr("href"), host);
-        if (!href) continue;
+function stripTags(text) {
+    return (text || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
 
-        var name = a.text();
-        if (!name) name = a.attr("title");
-        name = (name || "").replace(/\s+/g, " ").trim();
-        if (!name) continue;
-
-        // Chỉ lấy chapter thật, bỏ các link điều hướng như "Chương Mới Nhất".
-        var no = chapterNoFrom(name, href);
-        if (no < 1) continue;
-
-        if (seen[href]) continue;
-        seen[href] = true;
-
-        list.push({
+function upsertChapter(resultByNo, no, name, href, host) {
+    if (no < 1) return;
+    if (!resultByNo[no]) {
+        resultByNo[no] = {
             name: name,
             url: href,
             host: host,
             __no: no
-        });
+        };
+        return;
     }
-    return list;
+
+    // Ưu tiên tiêu đề bắt đầu bằng "Chương <số>" để khớp format danh sách chương.
+    var preferred = new RegExp("^\\s*chuong\\s*0*" + no + "\\b", "i");
+    var oldName = resultByNo[no].name || "";
+    var oldPreferred = preferred.test(oldName);
+    var newPreferred = preferred.test(name || "");
+    if (!oldPreferred && newPreferred) {
+        resultByNo[no] = {
+            name: name,
+            url: href,
+            host: host,
+            __no: no
+        };
+    }
+}
+
+function collectChapters(doc, resultByNo, host) {
+    var html = doc.html() || "";
+    var sectionCount = 0;
+
+    // Ưu tiên parse phần HTML sau tiêu đề "Danh sách chương" để tránh lẫn các khối khác.
+    var start = html.indexOf("Danh sách chương");
+    if (start < 0) start = html.indexOf("Danh Sách Chương");
+    if (start >= 0) {
+        var part = html.substring(start);
+
+        // Cắt tại khối phân trang hoặc phần bình luận để giới hạn vùng parse.
+        var endMarkers = ["pagination", "page-numbers", "nav-links", "comments", "Bình luận", "Related", "Footer"];
+        var cut = part.length;
+        var lowerPart = part.toLowerCase();
+        for (var e = 0; e < endMarkers.length; e++) {
+            var marker = endMarkers[e].toLowerCase();
+            var idx = lowerPart.indexOf(marker);
+            if (idx > 0 && idx < cut) cut = idx;
+        }
+        var scoped = part.substring(0, cut);
+
+        var re = /<a[^>]+href=["']([^"']*\/chuong[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+        var m;
+        while ((m = re.exec(scoped)) !== null) {
+            var href = normalizeUrl(m[1], host);
+            var name = stripTags(m[2]);
+            var no = chapterNoFrom(name, href);
+            if (no < 1) continue;
+            upsertChapter(resultByNo, no, name, href, host);
+            sectionCount++;
+        }
+    }
+
+    // Fallback bằng selector DOM nếu parse theo section không đủ dữ liệu.
+    if (sectionCount < 5) {
+        var nodes = doc.select("a[href*='/chuong']");
+        for (var i = 0; i < nodes.size(); i++) {
+            var a = nodes.get(i);
+            var href2 = normalizeUrl(a.attr("href"), host);
+            if (!href2) continue;
+
+            var name2 = a.text();
+            if (!name2) name2 = a.attr("title");
+            name2 = (name2 || "").replace(/\s+/g, " ").trim();
+            if (!name2) continue;
+
+            var no2 = chapterNoFrom(name2, href2);
+            if (no2 < 1) continue;
+            upsertChapter(resultByNo, no2, name2, href2, host);
+        }
+    }
 }
 
 function execute(url) {
@@ -57,8 +111,8 @@ function execute(url) {
     if (!response.ok) return null;
 
     var doc = response.html("utf-8");
-    var seen = {};
-    var data = collectChapters(doc, seen, host);
+    var byNo = {};
+    collectChapters(doc, byNo, host);
 
     // Lấy số trang mục lục (nếu có /page/2/ ...)
     var maxPage = 1;
@@ -92,11 +146,18 @@ function execute(url) {
         });
         if (!r.ok) continue;
         var d = r.html("utf-8");
-        var before = data.length;
-        data = data.concat(collectChapters(d, seen, host));
+        var before = Object.keys(byNo).length;
+        collectChapters(d, byNo, host);
+        var after = Object.keys(byNo).length;
 
         // Nếu trang phân trang không còn chương mới thì có thể đã tới cuối.
-        if (data.length === before && i > maxPage) break;
+        if (after === before && i > maxPage) break;
+    }
+
+    var data = [];
+    var keys = Object.keys(byNo);
+    for (var k = 0; k < keys.length; k++) {
+        data.push(byNo[keys[k]]);
     }
 
     // Sắp xếp từ Chương 1 tới chương cuối để app hiển thị đúng thứ tự đọc.
