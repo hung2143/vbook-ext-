@@ -1,9 +1,10 @@
 function execute(key, page) {
     if (!page) page = '1';
     var searchUrl = 'https://trangtruyen.site/tim-kiem?word=' + encodeURIComponent(key) + '&page=' + page;
-    var doc = Http.get(searchUrl).html();
+    var response = fetch(searchUrl);
+    if (!response.ok) return null;
 
-    if (!doc) return null;
+    var doc = response.html('utf-8');
 
     var data = [];
 

@@ -1,14 +1,16 @@
 function execute(url, page) {
     if (!page) page = '1';
     var listUrl = url + page;
-    var doc = Http.get(listUrl).html();
+    var response = fetch(listUrl);
+    if (!response.ok) return null;
 
+    var doc = response.html('utf-8');
     if (!doc) return null;
 
     var data = [];
 
     // Trên trang /stories, các truyện đều có link dạng
-    // https://trangtruyen.site/stories/slug-... nên chỉ cần bắt theo href.
+    // https://trangtruyen.site/stories/slug-...
     var items = doc.select("a[href^='https://trangtruyen.site/stories/'], a[href^='/stories/']");
 
     var seen = {};
@@ -31,8 +33,6 @@ function execute(url, page) {
         });
     });
 
-    // Trang hiện tại hầu như không hiển thị rõ nút trang kế,
-    // nếu sau này có phân trang, có thể cải tiến thêm.
     var next = null;
 
     return Response.success(data, next);

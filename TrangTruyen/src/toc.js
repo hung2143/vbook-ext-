@@ -1,6 +1,8 @@
 function execute(url) {
-    var doc = Http.get(url).html();
-    if (!doc) return null;
+    var response = fetch(url);
+    if (!response.ok) return null;
+
+    var doc = response.html('utf-8');
 
     var data = [];
 
