@@ -28,6 +28,14 @@ function normalizeNameKey(name) {
     return "t:" + n.replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
 }
 
+function extractChapterNumber(name) {
+    var n = (name || "").toLowerCase();
+    var m = n.match(/^(?:chương|chuong)\s*(\d+)/i);
+    if (!m) return -1;
+    var num = parseInt(m[1], 10);
+    return isNaN(num) ? -1 : num;
+}
+
 function shouldSkipAnchor(name, href) {
     var n = (name || "").toLowerCase();
     var u = (href || "").toLowerCase();
@@ -94,7 +102,7 @@ function extractChapterSectionHtml(pageHtml) {
     return segment.substring(0, cut);
 }
 
-function collectChaptersFromHtml(sectionHtml, result, seen, seenName, host) {
+function collectChaptersFromHtml(sectionHtml, result, seen, seenName, orderState, host) {
     var added = 0;
     if (!sectionHtml) return 0;
 
@@ -106,14 +114,17 @@ function collectChaptersFromHtml(sectionHtml, result, seen, seenName, host) {
         var rawName = (m[2] || "").replace(/<[^>]*>/g, " ");
         var name = cleanChapterName(htmlDecode(rawName).replace(/\s+/g, " ").trim());
         var nameKey = normalizeNameKey(name);
+        var chapterNo = extractChapterNumber(name);
 
         if (!href || seen[href]) continue;
         if (shouldSkipAnchor(name, href)) continue;
+        if (chapterNo >= 0 && chapterNo < orderState.maxChapterNo) continue;
         if (nameKey && seenName[nameKey]) continue;
         if (!name) continue;
 
         seen[href] = true;
         if (nameKey) seenName[nameKey] = true;
+        if (chapterNo > orderState.maxChapterNo) orderState.maxChapterNo = chapterNo;
         result.push({
             name: name,
             url: href,
@@ -125,10 +136,10 @@ function collectChaptersFromHtml(sectionHtml, result, seen, seenName, host) {
     return added;
 }
 
-function collectChapters(doc, result, seen, seenName, host) {
+function collectChapters(doc, result, seen, seenName, orderState, host) {
     var pageHtml = doc.html() || "";
     var sectionHtml = extractChapterSectionHtml(pageHtml);
-    var added = collectChaptersFromHtml(sectionHtml, result, seen, seenName, host);
+    var added = collectChaptersFromHtml(sectionHtml, result, seen, seenName, orderState, host);
 
     if (added > 0) return added;
 
@@ -139,14 +150,17 @@ function collectChapters(doc, result, seen, seenName, host) {
         var href = normalizeUrl(a.attr("href"), host);
         var name = cleanChapterName(a.text() || a.attr("title"));
         var nameKey = normalizeNameKey(name);
+        var chapterNo = extractChapterNumber(name);
         if (!href || seen[href]) continue;
         if (shouldSkipAnchor(name, href)) continue;
         if (!/^(?:chương|chuong|ngoại\s*truyện|ngoai\s*truyen|phần|phan|quyển|quyen)\b/i.test(name)) continue;
+        if (chapterNo >= 0 && chapterNo < orderState.maxChapterNo) continue;
         if (nameKey && seenName[nameKey]) continue;
         if (!name) continue;
 
         seen[href] = true;
         if (nameKey) seenName[nameKey] = true;
+        if (chapterNo > orderState.maxChapterNo) orderState.maxChapterNo = chapterNo;
         result.push({
             name: name,
             url: href,
@@ -184,7 +198,8 @@ function execute(url) {
     var data = [];
     var seen = {};
     var seenName = {};
-    collectChapters(doc, data, seen, seenName, host);
+    var orderState = { maxChapterNo: 0 };
+    collectChapters(doc, data, seen, seenName, orderState, host);
 
     var base = url;
     if (!base.endsWith('/')) base += '/';
@@ -206,7 +221,7 @@ function execute(url) {
             });
             if (!fr.ok) break;
             var fd = fr.html("utf-8");
-            var fAdded = collectChapters(fd, data, seen, seenName, host);
+            var fAdded = collectChapters(fd, data, seen, seenName, orderState, host);
             if (fAdded === 0) break;
         }
         return Response.success(data);
@@ -223,7 +238,7 @@ function execute(url) {
         });
         if (!r.ok) continue;
         var d = r.html("utf-8");
-        collectChapters(d, data, seen, seenName, host);
+        collectChapters(d, data, seen, seenName, orderState, host);
     }
 
     return Response.success(data);
