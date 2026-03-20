@@ -60,6 +60,11 @@ function execute(url, page) {
         // cả dạng tuyệt đối lẫn tương đối.
         if (data.length === 0) {
             var html = doc.html();
+            // Ghi log một phần HTML để xem server trả gì trên app
+            try {
+                var snippet = html.substring(0, 400);
+                Console.log('TrangTruyen /stories HTML snippet: ' + snippet);
+            } catch (ignore) {}
             var regex = /(https:\/\/trangtruyen\.site\/stories\/[^"'>\s]+|\/stories\/[^"'>\s]+)/g;
             var m;
             while ((m = regex.exec(html)) !== null) {
