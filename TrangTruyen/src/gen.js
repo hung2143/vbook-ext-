@@ -54,13 +54,15 @@ function execute(url, page) {
         });
 
         // Nếu selector không bắt được gì (do DOM khác bản desktop),
-        // fallback dùng regex quét toàn bộ HTML để lấy link truyện.
+        // fallback dùng regex quét toàn bộ HTML để lấy link truyện
+        // cả dạng tuyệt đối lẫn tương đối.
         if (data.length === 0) {
             var html = doc.html();
-            var regex = /https:\/\/trangtruyen\.site\/stories\/[^"'>\s]+/g;
+            var regex = /(https:\/\/trangtruyen\.site\/stories\/[^"'>\s]+|\/stories\/[^"'>\s]+)/g;
             var m;
             while ((m = regex.exec(html)) !== null) {
                 var link2 = m[0];
+                if (!link2.startsWith('http')) link2 = 'https://trangtruyen.site' + link2;
                 if (seen[link2]) continue;
                 seen[link2] = true;
 
@@ -75,17 +77,17 @@ function execute(url, page) {
                     host: 'https://trangtruyen.site'
                 });
             }
-        }
 
-        // Nếu vẫn không có gì, trả về 1 dòng debug để biết plugin chạy.
-        if (data.length === 0) {
-            data.push({
-                name: 'TrangTruyen: không tìm thấy truyện',
-                link: 'https://trangtruyen.site/stories',
-                cover: '',
-                description: 'Không quét được link /stories/... trong HTML',
-                host: 'https://trangtruyen.site'
-            });
+            // Nếu vẫn không có gì, trả về 1 dòng debug để biết plugin chạy.
+            if (data.length === 0) {
+                data.push({
+                    name: 'TrangTruyen: không tìm thấy truyện',
+                    link: 'https://trangtruyen.site/stories',
+                    cover: '',
+                    description: 'HTML length: ' + html.length + ' | has "/stories/": ' + (html.indexOf('/stories/') !== -1),
+                    host: 'https://trangtruyen.site'
+                });
+            }
         }
 
         var next = null;

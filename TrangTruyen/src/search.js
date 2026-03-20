@@ -32,10 +32,11 @@ function execute(key, page) {
     // Fallback regex nếu DOM khác bản desktop.
     if (data.length === 0) {
         var html = doc.html();
-        var regex = /https:\/\/trangtruyen\.site\/stories\/[^"'>\s]+/g;
+        var regex = /(https:\/\/trangtruyen\.site\/stories\/[^"'>\s]+|\/stories\/[^"'>\s]+)/g;
         var m;
         while ((m = regex.exec(html)) !== null) {
             var link2 = m[0];
+            if (!link2.startsWith('http')) link2 = 'https://trangtruyen.site' + link2;
             if (seen[link2]) continue;
             seen[link2] = true;
 
