@@ -528,8 +528,8 @@ function extractHtmlContent(doc) {
     return "";
 }
 
-function loginRequiredError() {
-    return Response.error("Bạn phải mở trang nguồn để đăng nhập, sau đó quay lại truyện đã nhúng và tải lại chương để đọc.");
+function loginRequiredError(url) {
+    return Response.error("Bạn phải vào trang nguồn đăng nhập để có thể đọc.\n" + (url || ""));
 }
 
 function execute(url) {
@@ -560,7 +560,7 @@ function execute(url) {
 
         if (!pageResponse.ok) {
             if (apiRes && apiRes.requireLogin) {
-                return loginRequiredError();
+                return loginRequiredError(url);
             }
             if (apiHtml && isCipherLikeContent(apiHtml)) {
                 return Response.success("<p>Nội dung chương đang được mã hóa từ nguồn. Plugin hiện chưa giải mã tự động được chương này.</p>");
@@ -600,9 +600,9 @@ function execute(url) {
         var text = doc.text() || "";
         if (/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(text) || (apiRes && apiRes.requireLogin)) {
             if (hasAnyAuthCredential()) {
-                return Response.error("Nguồn vẫn yêu cầu đăng nhập cho chương này. Hãy mở trang nguồn, đăng nhập lại, rồi quay lại chương đã nhúng và tải lại.");
+                return Response.error("Nguồn vẫn yêu cầu đăng nhập cho chương này. Hãy vào trang nguồn đăng nhập lại rồi tải lại chương.\n" + url);
             }
-            return loginRequiredError();
+            return loginRequiredError(url);
         }
 
         if ((apiHtml && isCipherLikeContent(apiHtml)) || isCipherLikeContent(html)) {
