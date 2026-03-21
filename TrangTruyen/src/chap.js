@@ -103,6 +103,39 @@ function extractRequestCookie(response) {
     }
 }
 
+function getSessionCookie(url) {
+    var cookie = "";
+
+    try {
+        cookie = localCookie.getCookie() || "";
+    } catch (_) {
+    }
+    if (cookie) return cookie;
+
+    try {
+        var probe = fetch(url, { headers: buildTrangTruyenHeaders() });
+        cookie = extractRequestCookie(probe);
+    } catch (_) {
+    }
+    if (cookie) return cookie;
+
+    // Same idea as metruyenchu: open source page once so runtime can sync auth cookies.
+    try {
+        var browser = Engine.newBrowser();
+        browser.launch(url, 5000);
+        browser.close();
+    } catch (_) {
+    }
+
+    try {
+        var probe2 = fetch(url, { headers: buildTrangTruyenHeaders() });
+        cookie = extractRequestCookie(probe2);
+    } catch (_) {
+    }
+
+    return cookie || "";
+}
+
 function hasAnyAuthCredential() {
     try {
         var cookie = localCookie.getCookie();
@@ -534,10 +567,13 @@ function loginRequiredError(url) {
 
 function execute(url) {
     try {
+        var runtimeCookie = getSessionCookie(url);
         var pageResponse = fetch(url, {
-            headers: buildTrangTruyenHeaders()
+            headers: buildTrangTruyenHeaders({
+                "Cookie": runtimeCookie || "",
+                "cookie": runtimeCookie || ""
+            })
         });
-        var runtimeCookie = extractRequestCookie(pageResponse);
 
         var apiRes = tryApiContent(url, runtimeCookie);
         var apiHtml = apiRes && apiRes.content ? apiRes.content : "";
