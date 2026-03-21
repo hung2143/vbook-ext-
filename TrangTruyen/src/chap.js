@@ -529,7 +529,7 @@ function extractHtmlContent(doc) {
 }
 
 function loginRequiredError(url) {
-    return Response.error("Bạn phải vào trang nguồn đăng nhập để có thể đọc.\n" + (url || ""));
+    return Response.error(url || "https://trangtruyen.site/");
 }
 
 function execute(url) {
@@ -600,7 +600,7 @@ function execute(url) {
         var text = doc.text() || "";
         if (/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(text) || (apiRes && apiRes.requireLogin)) {
             if (hasAnyAuthCredential()) {
-                return Response.error("Nguồn vẫn yêu cầu đăng nhập cho chương này. Hãy vào trang nguồn đăng nhập lại rồi tải lại chương.\n" + url);
+                return Response.error(url || "https://trangtruyen.site/");
             }
             return loginRequiredError(url);
         }
