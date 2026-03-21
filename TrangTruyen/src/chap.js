@@ -62,7 +62,10 @@ function buildTrangTruyenHeaders(extra) {
 
     try {
         var cookie = localCookie.getCookie();
-        if (cookie) headers["Cookie"] = cookie;
+        if (cookie) {
+            headers["Cookie"] = cookie;
+            headers["cookie"] = cookie;
+        }
     } catch (_) {
     }
 
@@ -72,7 +75,11 @@ function buildTrangTruyenHeaders(extra) {
             localStorage.getItem("accessToken") ||
             localStorage.getItem("token") ||
             "";
-        if (token) headers["Authorization"] = /^Bearer\s+/i.test(token) ? token : ("Bearer " + token);
+        if (token) {
+            var auth = /^Bearer\s+/i.test(token) ? token : ("Bearer " + token);
+            headers["Authorization"] = auth;
+            headers["authorization"] = auth;
+        }
     } catch (_) {
     }
 
@@ -84,6 +91,16 @@ function buildTrangTruyenHeaders(extra) {
     }
 
     return headers;
+}
+
+function extractRequestCookie(response) {
+    try {
+        if (!response || !response.request || !response.request.headers) return "";
+        var h = response.request.headers;
+        return String(h.cookie || h.Cookie || "");
+    } catch (_) {
+        return "";
+    }
 }
 
 function hasAnyAuthCredential() {
@@ -381,7 +398,7 @@ function paragraphsToHtml(paragraphs) {
     return html.join("\n");
 }
 
-function tryDecryptCipherContent(chapterId, cipherText, contentMeta) {
+function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCookie) {
     if (!canUseJavaCrypto()) return "";
     if (!chapterId || !cipherText || !contentMeta) return "";
 
@@ -402,7 +419,9 @@ function tryDecryptCipherContent(chapterId, cipherText, contentMeta) {
             "content-type": "application/json",
             "x-device-proof": deviceProof,
             "x-client-ua-hash": uaHash,
-            "origin": "https://trangtruyen.site"
+            "origin": "https://trangtruyen.site",
+            "Cookie": forcedCookie || "",
+            "cookie": forcedCookie || ""
         }),
         body: JSON.stringify({ grantId: grantId, deviceProof: deviceProof, uaHash: uaHash })
     });
@@ -456,12 +475,15 @@ function tryDecryptCipherContent(chapterId, cipherText, contentMeta) {
     return "";
 }
 
-function tryApiContent(url) {
+function tryApiContent(url, forcedCookie) {
     var chapterId = extractChapterId(url);
     if (!chapterId) return { content: "", requireLogin: false, chapterId: "", contentMetaV2: null };
 
     var response = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
-        headers: buildTrangTruyenHeaders()
+        headers: buildTrangTruyenHeaders({
+            "Cookie": forcedCookie || "",
+            "cookie": forcedCookie || ""
+        })
     });
     if (!response.ok) return { content: "", requireLogin: false, chapterId: chapterId, contentMetaV2: null };
 
@@ -508,14 +530,19 @@ function extractHtmlContent(doc) {
 
 function execute(url) {
     try {
-        var apiRes = tryApiContent(url);
+        var pageResponse = fetch(url, {
+            headers: buildTrangTruyenHeaders()
+        });
+        var runtimeCookie = extractRequestCookie(pageResponse);
+
+        var apiRes = tryApiContent(url, runtimeCookie);
         var apiHtml = apiRes && apiRes.content ? apiRes.content : "";
         var chapterId = (apiRes && apiRes.chapterId) ? apiRes.chapterId : extractChapterId(url);
         var apiMeta = apiRes ? apiRes.contentMetaV2 : null;
 
         if (apiHtml && isCipherLikeContent(apiHtml) && apiMeta) {
             try {
-                var decrypted = tryDecryptCipherContent(chapterId, apiHtml, apiMeta);
+                var decrypted = tryDecryptCipherContent(chapterId, apiHtml, apiMeta, runtimeCookie);
                 if (decrypted && decrypted.length > 30) {
                     return Response.success(decrypted);
                 }
@@ -527,11 +554,7 @@ function execute(url) {
             return Response.success(apiHtml);
         }
 
-        var response = fetch(url, {
-            headers: buildTrangTruyenHeaders()
-        });
-
-        if (!response.ok) {
+        if (!pageResponse.ok) {
             if (apiRes && apiRes.requireLogin) {
                 return Response.success("<p>Nội dung chương yêu cầu đăng nhập. Hãy đăng nhập lại trong app rồi tải lại chương.</p>");
             }
@@ -541,7 +564,7 @@ function execute(url) {
             return Response.success("<p>Không tải được nội dung chương từ nguồn. Bạn có thể bấm 'Xem trang nguồn' rồi thử lại.</p>");
         }
 
-        var doc = response.html("utf-8");
+        var doc = pageResponse.html("utf-8");
 
         var scriptExtract = extractCipherMetaFromPage(doc, chapterId);
         if (scriptExtract && scriptExtract.cipherText && scriptExtract.contentMetaV2) {
@@ -549,7 +572,8 @@ function execute(url) {
                 var decFromPage = tryDecryptCipherContent(
                     scriptExtract.chapterId || chapterId,
                     scriptExtract.cipherText,
-                    scriptExtract.contentMetaV2
+                    scriptExtract.contentMetaV2,
+                    runtimeCookie
                 );
                 if (decFromPage && decFromPage.length > 30) {
                     return Response.success(decFromPage);
@@ -581,7 +605,14 @@ function execute(url) {
             return Response.success("<p>Nội dung chương đang được mã hóa từ nguồn. Plugin hiện chưa giải mã tự động được chương này.</p>");
         }
 
-        return Response.success("<p>Không tải được nội dung chương từ nguồn. Bạn có thể bấm 'Xem trang nguồn' rồi thử lại.</p>");
+        return Response.success(
+            "<p>Không tải được nội dung chương từ nguồn.</p>" +
+            "<p>Chẩn đoán: " +
+            "runtimeCookie=" + (runtimeCookie ? "yes" : "no") +
+            ", apiRequireLogin=" + ((apiRes && apiRes.requireLogin) ? "yes" : "no") +
+            ", apiMeta=" + ((apiRes && apiRes.contentMetaV2) ? "yes" : "no") +
+            ".</p>"
+        );
     } catch (e) {
         return Response.success("<p>Không tải được nội dung chương do lỗi tạm thời. Hãy thử tải lại hoặc mở trang nguồn.</p>");
     }
