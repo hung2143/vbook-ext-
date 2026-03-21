@@ -700,6 +700,102 @@ function extractChapterFromRawHtml(rawHtml) {
     return "";
 }
 
+function getUrlSpecificDomSelectors(url) {
+    var u = String(url || "");
+    var selectors = [
+        ".chapter-content",
+        ".reader-content",
+        ".chapter-body",
+        "#chapter-content",
+        "#reader-content",
+        "#chapter-body",
+        "[data-chapter-content]",
+        "[data-reader-content]",
+        "article .chapter-content",
+        "main .chapter-content"
+    ];
+
+    if (/\/read\//i.test(u)) {
+        selectors = selectors.concat([
+            ".novel-content",
+            ".reading-content",
+            ".chapter-detail__content",
+            ".content-chapter",
+            ".entry-content",
+            ".prose",
+            "main article",
+            "article"
+        ]);
+    }
+
+    if (/trangtruyen\.site/i.test(u)) {
+        selectors = selectors.concat([
+            "div[class*='chapter'][class*='content']",
+            "div[class*='reader'][class*='content']",
+            "div[class*='reading'][class*='content']",
+            "div[id*='chapter'][id*='content']"
+        ]);
+    }
+
+    return selectors;
+}
+
+function getBrowserSelectorResult(browser, selector, mode) {
+    if (!browser || !selector) return "";
+    var fnNames = ["evaluate", "executeScript", "runScript", "eval"];
+    var script = "(function(){var n=document.querySelector(" + JSON.stringify(String(selector)) + ");if(!n)return '';return " +
+        (mode === "text"
+            ? "(n.innerText||n.textContent||'');"
+            : "(n.innerHTML||'');") +
+        "})()";
+
+    for (var i = 0; i < fnNames.length; i++) {
+        var fn = fnNames[i];
+        try {
+            if (typeof browser[fn] !== "function") continue;
+            var out = browser[fn](script);
+            if (out !== undefined && out !== null) {
+                var s = String(out || "");
+                if (s) return s;
+            }
+        } catch (_) {
+        }
+    }
+
+    return "";
+}
+
+function extractFromBrowserDomBySelectors(browser, url) {
+    var selectors = getUrlSpecificDomSelectors(url);
+
+    for (var i = 0; i < selectors.length; i++) {
+        var selector = selectors[i];
+
+        var html = getBrowserSelectorResult(browser, selector, "html");
+        if (html) {
+            var cleaned = cleanHtml(html);
+            if (isReadableHtml(cleaned) && !isCipherLikeContent(cleaned)) {
+                return cleaned;
+            }
+
+            var txtFromHtml = htmlToText(cleaned || "");
+            if (txtFromHtml.length > 200 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(txtFromHtml)) {
+                return plainTextToHtml(txtFromHtml);
+            }
+        }
+
+        var text = getBrowserSelectorResult(browser, selector, "text");
+        if (text) {
+            var normalized = String(text || "").replace(/\s+/g, " ").trim();
+            if (normalized.length > 220 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(normalized)) {
+                return plainTextToHtml(normalized);
+            }
+        }
+    }
+
+    return "";
+}
+
 function tryBrowserRenderedContent(url) {
     var browser = null;
     var htmlCandidates = [];
@@ -708,6 +804,12 @@ function tryBrowserRenderedContent(url) {
     try {
         browser = Engine.newBrowser();
         browser.launch(url, 9000);
+
+        var domSelected = extractFromBrowserDomBySelectors(browser, url);
+        if (domSelected) {
+            try { browser.close(); } catch (_) {}
+            return domSelected;
+        }
 
         try { htmlCandidates.push(String(browser.html() || "")); } catch (_) {}
         try { htmlCandidates.push(String(browser.getHtml() || "")); } catch (_) {}
