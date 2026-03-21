@@ -56,13 +56,13 @@ function extractChapterId(url) {
 
 function buildTrangTruyenHeaders(extra) {
     var headers = {
-        "user-agent": UserAgent.chrome(),
-        "referer": "https://trangtruyen.site/"
+        "User-Agent": UserAgent.chrome(),
+        "Referer": "https://trangtruyen.site/"
     };
 
     try {
         var cookie = localCookie.getCookie();
-        if (cookie) headers["cookie"] = cookie;
+        if (cookie) headers["Cookie"] = cookie;
     } catch (_) {
     }
 
@@ -72,7 +72,7 @@ function buildTrangTruyenHeaders(extra) {
             localStorage.getItem("accessToken") ||
             localStorage.getItem("token") ||
             "";
-        if (token) headers["authorization"] = /^Bearer\s+/i.test(token) ? token : ("Bearer " + token);
+        if (token) headers["Authorization"] = /^Bearer\s+/i.test(token) ? token : ("Bearer " + token);
     } catch (_) {
     }
 
@@ -84,6 +84,26 @@ function buildTrangTruyenHeaders(extra) {
     }
 
     return headers;
+}
+
+function hasAnyAuthCredential() {
+    try {
+        var cookie = localCookie.getCookie();
+        if (cookie && /(?:session|token|auth|jwt|user)/i.test(cookie)) return true;
+    } catch (_) {
+    }
+
+    try {
+        var token =
+            localStorage.getItem("trangtruyen_token") ||
+            localStorage.getItem("accessToken") ||
+            localStorage.getItem("token") ||
+            "";
+        if (token) return true;
+    } catch (_) {
+    }
+
+    return false;
 }
 
 function canUseJavaCrypto() {
@@ -476,6 +496,12 @@ function extractHtmlContent(doc) {
         if (!node) continue;
         var html = cleanHtml(node.html() || "");
         if (isReadableHtml(html)) return html;
+
+        // Some chapters are rendered as plain text blocks without paragraph tags.
+        var blockText = (node.text() || "").replace(/\s+/g, " ").trim();
+        if (blockText.length > 180 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(blockText)) {
+            return plainTextToHtml(blockText);
+        }
     }
     return "";
 }
@@ -534,10 +560,6 @@ function execute(url) {
 
         var html = extractHtmlContent(doc);
 
-        if (apiRes && apiRes.requireLogin) {
-            return Response.success("<p>Nội dung chương yêu cầu đăng nhập. Hãy đăng nhập lại trong app rồi tải lại chương.</p>");
-        }
-
         if (isReadableHtml(html) && !isCipherLikeContent(html)) {
             return Response.success(html);
         }
@@ -549,6 +571,9 @@ function execute(url) {
 
         var text = doc.text() || "";
         if (/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(text) || (apiRes && apiRes.requireLogin)) {
+            if (hasAnyAuthCredential()) {
+                return Response.success("<p>Đã có phiên đăng nhập nhưng nguồn vẫn trả trạng thái yêu cầu đăng nhập cho chương này. Hãy mở trang nguồn trong app rồi tải lại để làm mới phiên.</p>");
+            }
             return Response.success("<p>Nội dung chương yêu cầu đăng nhập. Hãy đăng nhập lại trong app rồi tải lại chương.</p>");
         }
 
