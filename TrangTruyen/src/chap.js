@@ -446,11 +446,51 @@ function collectValueCandidates(obj) {
     return vals;
 }
 
+function collectDirectHexKeys(resolveObj, metaObj) {
+    var vals = collectValueCandidates(resolveObj).concat(collectValueCandidates(metaObj));
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < vals.length; i++) {
+        var s = String(vals[i] || "").trim();
+        if (!s) continue;
+
+        if (/^[0-9a-f]{64}$/i.test(s)) {
+            var h1 = s.toLowerCase();
+            if (!seen[h1]) {
+                seen[h1] = true;
+                out.push(h1);
+            }
+        }
+
+        if (/^[A-Za-z0-9+/=]{24,}$/i.test(s)) {
+            try {
+                var asHex = sha256Hex(s);
+                if (!seen[asHex]) {
+                    seen[asHex] = true;
+                    out.push(asHex);
+                }
+            } catch (_) {
+            }
+        }
+    }
+    return out;
+}
+
 function deriveKeyHexes(resolveObj, metaObj, maxKeys) {
     var rVals = collectValueCandidates(resolveObj);
     var mVals = collectValueCandidates(metaObj);
     var out = [];
     var seen = {};
+
+    var direct = collectDirectHexKeys(resolveObj, metaObj);
+    for (var d = 0; d < direct.length; d++) {
+        var dk = direct[d];
+        if (!seen[dk]) {
+            seen[dk] = true;
+            out.push(dk);
+            if (maxKeys && out.length >= maxKeys) return out;
+        }
+    }
 
     for (var i = 0; i < rVals.length; i++) {
         for (var j = 0; j < mVals.length; j++) {
@@ -459,7 +499,12 @@ function deriveKeyHexes(resolveObj, metaObj, maxKeys) {
                     rVals[i] + ":" + mVals[j] + ":" + mVals[k],
                     rVals[i] + ":" + mVals[j] + mVals[k],
                     rVals[i] + mVals[j] + ":" + mVals[k],
-                    rVals[i] + mVals[j] + mVals[k]
+                    rVals[i] + mVals[j] + mVals[k],
+                    mVals[j] + ":" + rVals[i] + ":" + mVals[k],
+                    mVals[j] + mVals[k] + rVals[i],
+                    rVals[i] + ":" + mVals[j],
+                    rVals[i] + ":" + mVals[k],
+                    mVals[j] + ":" + mVals[k]
                 ];
                 for (var t = 0; t < candidates.length; t++) {
                     var h = sha256Hex(candidates[t]);
@@ -715,7 +760,7 @@ function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCooki
 
 function tryApiContent(url, forcedCookie, forcedToken) {
     var chapterId = extractChapterId(url);
-    if (!chapterId) return { content: "", requireLogin: false, chapterId: "", contentMetaV2: null };
+    if (!chapterId) return { content: "", rawContent: "", requireLogin: false, chapterId: "", contentMetaV2: null };
 
     var response = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
         headers: buildTrangTruyenHeaders()
@@ -727,7 +772,7 @@ function tryApiContent(url, forcedCookie, forcedToken) {
             });
         }
     }
-    if (!response.ok) return { content: "", requireLogin: false, chapterId: chapterId, contentMetaV2: null };
+    if (!response.ok) return { content: "", rawContent: "", requireLogin: false, chapterId: chapterId, contentMetaV2: null };
 
     var json = response.json();
     if ((!json || !json.chapter) && (forcedCookie || forcedToken)) {
@@ -736,7 +781,7 @@ function tryApiContent(url, forcedCookie, forcedToken) {
         });
         if (response2.ok) json = response2.json();
     }
-    if (!json || !json.chapter) return { content: "", requireLogin: false, chapterId: chapterId, contentMetaV2: null };
+    if (!json || !json.chapter) return { content: "", rawContent: "", requireLogin: false, chapterId: chapterId, contentMetaV2: null };
 
     if (json.requireLogin && (forcedCookie || forcedToken)) {
         var retryAuthRes = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
@@ -748,13 +793,15 @@ function tryApiContent(url, forcedCookie, forcedToken) {
         }
     }
 
-    var content = cleanHtml(json.chapter.content || "");
+    var rawContent = String((json.chapter && json.chapter.content) || "");
+    var content = cleanHtml(rawContent || "");
     if (content && content.indexOf("<") < 0) {
         content = plainTextToHtml(content);
     }
 
     return {
         content: content,
+        rawContent: rawContent,
         requireLogin: !!json.requireLogin,
         chapterId: String((json.chapter && json.chapter.id) || chapterId || ""),
         contentMetaV2: json.contentMetaV2 || null
@@ -1175,20 +1222,27 @@ function execute(url) {
 
         var apiRes = tryApiContent(url, runtimeCookie, runtimeToken);
         var apiHtml = apiRes && apiRes.content ? apiRes.content : "";
+        var apiRaw = apiRes && apiRes.rawContent ? String(apiRes.rawContent) : "";
         var chapterId = (apiRes && apiRes.chapterId) ? apiRes.chapterId : extractChapterId(url);
         var apiMeta = apiRes ? apiRes.contentMetaV2 : null;
         dbg("api_login=" + ((apiRes && apiRes.requireLogin) ? "1" : "0"));
         dbg("api_html_len=" + String((apiHtml || "").length));
         dbg("api_meta=" + (apiMeta ? "1" : "0"));
 
-        if (apiHtml && isCipherLikeContent(apiHtml) && apiMeta) {
+        var apiCipherInput = (apiRaw && isCipherLikeContent(apiRaw)) ? apiRaw : apiHtml;
+        dbg("api_raw_len=" + String((apiRaw || "").length));
+        dbg("api_raw_cipher=" + (isCipherLikeContent(apiRaw) ? "1" : "0"));
+
+        if (apiCipherInput && isCipherLikeContent(apiCipherInput) && apiMeta) {
             try {
-                var decrypted = tryDecryptCipherContent(chapterId, apiHtml, apiMeta, runtimeCookie, runtimeToken);
+                var decrypted = tryDecryptCipherContent(chapterId, apiCipherInput, apiMeta, runtimeCookie, runtimeToken);
+                dbg("api_decrypt_len=" + String((decrypted || "").length));
                 if (decrypted && decrypted.length > 30) {
                     clearAuthRetryNeeded();
                     return Response.success(decrypted);
                 }
             } catch (_) {
+                dbg("api_decrypt_exception=1");
             }
         }
 
@@ -1267,7 +1321,7 @@ function execute(url) {
             return loginRequiredErrorWithDebug(url, debug);
         }
 
-        if ((apiHtml && isCipherLikeContent(apiHtml)) || isCipherLikeContent(html)) {
+        if ((apiCipherInput && isCipherLikeContent(apiCipherInput)) || isCipherLikeContent(html)) {
             if (retryMode) {
                 var browserCipherFallback = tryBrowserRenderedContent(url);
                 dbg("dom_retry_cipher_len=" + String((browserCipherFallback || "").length));
