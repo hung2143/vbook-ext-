@@ -433,17 +433,51 @@ function pickFirstValue(obj, names) {
 
 function collectValueCandidates(obj) {
     var vals = [];
-    if (!obj) return vals;
-    for (var k in obj) {
-        if (!obj.hasOwnProperty(k)) continue;
-        var v = obj[k];
-        if (v === undefined || v === null) continue;
-        if (typeof v === "string" || typeof v === "number") {
-            var s = String(v);
-            if (s) vals.push(s);
+    var seen = {};
+
+    function walk(node, depth) {
+        if (node === undefined || node === null) return;
+        if (depth > 8) return;
+
+        var t = typeof node;
+        if (t === "string" || t === "number" || t === "boolean") {
+            var s = String(node);
+            if (!s) return;
+            if (!seen[s]) {
+                seen[s] = true;
+                vals.push(s);
+            }
+            return;
+        }
+
+        if (Array.isArray(node)) {
+            for (var i = 0; i < node.length; i++) walk(node[i], depth + 1);
+            return;
+        }
+
+        if (t === "object") {
+            for (var k in node) {
+                if (!node.hasOwnProperty(k)) continue;
+                walk(node[k], depth + 1);
+            }
         }
     }
+
+    walk(obj, 0);
     return vals;
+}
+
+function bytesToHex(bytes) {
+    if (!bytes || !bytes.length) return "";
+    var sb = new java.lang.StringBuilder();
+    for (var i = 0; i < bytes.length; i++) {
+        var b = bytes[i];
+        if (b < 0) b += 256;
+        var h = java.lang.Integer.toHexString(b);
+        if (h.length() === 1) sb.append("0");
+        sb.append(h);
+    }
+    return String(sb.toString());
 }
 
 function collectDirectHexKeys(resolveObj, metaObj) {
@@ -464,10 +498,36 @@ function collectDirectHexKeys(resolveObj, metaObj) {
 
         if (/^[A-Za-z0-9+/=]{24,}$/i.test(s)) {
             try {
+                var decoded = decodeBase64Bytes(s);
+                if (decoded && (decoded.length === 16 || decoded.length === 24 || decoded.length === 32)) {
+                    var h0 = bytesToHex(decoded);
+                    if (h0 && !seen[h0]) {
+                        seen[h0] = true;
+                        out.push(h0);
+                    }
+                }
+            } catch (_) {
+            }
+
+            try {
                 var asHex = sha256Hex(s);
                 if (!seen[asHex]) {
                     seen[asHex] = true;
                     out.push(asHex);
+                }
+            } catch (_) {
+            }
+        }
+
+        if (/^[\x21-\x7e]{16,64}$/.test(s)) {
+            try {
+                var utf8Bytes = new java.lang.String(s).getBytes(Java.type("java.nio.charset.StandardCharsets").UTF_8);
+                if (utf8Bytes && (utf8Bytes.length === 16 || utf8Bytes.length === 24 || utf8Bytes.length === 32)) {
+                    var h2 = bytesToHex(utf8Bytes);
+                    if (h2 && !seen[h2]) {
+                        seen[h2] = true;
+                        out.push(h2);
+                    }
                 }
             } catch (_) {
             }
