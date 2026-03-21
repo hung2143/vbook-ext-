@@ -666,6 +666,80 @@ function extractHtmlContent(doc) {
     return "";
 }
 
+function extractChapterFromRawHtml(rawHtml) {
+    if (!rawHtml) return "";
+    var html = String(rawHtml || "");
+
+    var patterns = [
+        /<div[^>]*class=["'][^"']*chapter-content[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+        /<div[^>]*class=["'][^"']*reader-content[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+        /<div[^>]*class=["'][^"']*chapter-body[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+        /<article[^>]*>([\s\S]*?)<\/article>/i,
+        /<main[^>]*>([\s\S]*?)<\/main>/i
+    ];
+
+    for (var i = 0; i < patterns.length; i++) {
+        var m = html.match(patterns[i]);
+        if (!m || !m[1]) continue;
+        var cleaned = cleanHtml(m[1]);
+        if (isReadableHtml(cleaned) && !isCipherLikeContent(cleaned)) {
+            return cleaned;
+        }
+
+        var cleanedText = htmlToText(cleaned || "");
+        if (cleanedText.length > 200 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(cleanedText)) {
+            return plainTextToHtml(cleanedText);
+        }
+    }
+
+    var allText = htmlToText(html || "");
+    if (allText.length > 300 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(allText)) {
+        return plainTextToHtml(allText);
+    }
+
+    return "";
+}
+
+function tryBrowserRenderedContent(url) {
+    var browser = null;
+    var htmlCandidates = [];
+    var textCandidates = [];
+
+    try {
+        browser = Engine.newBrowser();
+        browser.launch(url, 9000);
+
+        try { htmlCandidates.push(String(browser.html() || "")); } catch (_) {}
+        try { htmlCandidates.push(String(browser.getHtml() || "")); } catch (_) {}
+        try { htmlCandidates.push(String(browser.pageSource() || "")); } catch (_) {}
+        try { htmlCandidates.push(String(browser.source() || "")); } catch (_) {}
+
+        try { textCandidates.push(String(browser.text() || "")); } catch (_) {}
+        try { textCandidates.push(String(browser.getText() || "")); } catch (_) {}
+        try { textCandidates.push(String(browser.bodyText() || "")); } catch (_) {}
+    } catch (_) {
+    }
+
+    try {
+        if (browser) browser.close();
+    } catch (_) {
+    }
+
+    for (var i = 0; i < htmlCandidates.length; i++) {
+        var html = extractChapterFromRawHtml(htmlCandidates[i]);
+        if (html) return html;
+    }
+
+    for (var j = 0; j < textCandidates.length; j++) {
+        var text = String(textCandidates[j] || "").replace(/\s+/g, " ").trim();
+        if (text.length > 300 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(text)) {
+            return plainTextToHtml(text);
+        }
+    }
+
+    return "";
+}
+
 function loginRequiredError(url) {
     markAuthRetryNeeded();
     return Response.error(ERROR_MESSAGE + "\n" + (url || BASE_SOURCE));
@@ -759,11 +833,33 @@ function execute(url) {
 
         var text = doc.text() || "";
         if (/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(text) || (apiRes && apiRes.requireLogin)) {
+            if (retryMode) {
+                var browserHtml = tryBrowserRenderedContent(url);
+                if (browserHtml && browserHtml.length > 30) {
+                    clearAuthRetryNeeded();
+                    return Response.success(browserHtml);
+                }
+            }
             return loginRequiredError(url);
         }
 
         if ((apiHtml && isCipherLikeContent(apiHtml)) || isCipherLikeContent(html)) {
+            if (retryMode) {
+                var browserCipherFallback = tryBrowserRenderedContent(url);
+                if (browserCipherFallback && browserCipherFallback.length > 30) {
+                    clearAuthRetryNeeded();
+                    return Response.success(browserCipherFallback);
+                }
+            }
             return loginRequiredError(url);
+        }
+
+        if (retryMode) {
+            var browserFinalFallback = tryBrowserRenderedContent(url);
+            if (browserFinalFallback && browserFinalFallback.length > 30) {
+                clearAuthRetryNeeded();
+                return Response.success(browserFinalFallback);
+            }
         }
 
         return loginRequiredError(url);
