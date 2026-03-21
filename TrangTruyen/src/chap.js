@@ -40,6 +40,60 @@ function plainTextToHtml(text) {
     return out.join("\n");
 }
 
+function normalizeInvisibleChars(s) {
+    return String(s || "")
+        .replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "")
+        .replace(/\\u00a0/gi, " ")
+        .replace(/&nbsp;/gi, " ");
+}
+
+function tryDecodeEscapedString(s) {
+    var raw = String(s || "");
+    if (!raw) return "";
+    try {
+        return JSON.parse('"' + raw.replace(/\\/g, "\\\\").replace(/\"/g, '\\\"') + '"');
+    } catch (_) {
+        return raw;
+    }
+}
+
+function isLikelyUiNoise(line) {
+    if (!line) return true;
+    return /^(Đăng nhập|Login|Sign in|Mục lục|Cài đặt|Bản quyền|Trang Truyện|Tải lại|Xem trang nguồn|Trước|Sau)$/i.test(line) ||
+        /Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(line);
+}
+
+function scanReadableText(raw) {
+    var blob = normalizeInvisibleChars(tryDecodeEscapedString(raw || ""));
+    if (!blob) return "";
+
+    blob = blob
+        .replace(/\\r\\n|\\n|\\r/g, "\n")
+        .replace(/<br\s*\/?\s*>/gi, "\n")
+        .replace(/<\/p\s*>/gi, "\n")
+        .replace(/<[^>]+>/g, " ");
+
+    var chunks = blob.split(/[\n\t]+/g);
+    var kept = [];
+    for (var i = 0; i < chunks.length; i++) {
+        var line = String(chunks[i] || "").replace(/\s+/g, " ").trim();
+        if (!line || line.length < 24) continue;
+        if (isLikelyUiNoise(line)) continue;
+        if (/^[A-Za-z0-9+/=:_{}\[\]"',.-]+$/.test(line) && !/[À-ỹà-ỹ]/.test(line)) continue;
+        kept.push(line);
+    }
+
+    if (kept.length < 3) return "";
+
+    var merged = kept.join("\n");
+    var html = plainTextToHtml(merged);
+    if (!html) return "";
+
+    var txt = htmlToText(html);
+    if (txt.length < 120) return "";
+    return html;
+}
+
 function isCipherLikeContent(html) {
     var s = htmlToText(html || "").replace(/\s+/g, " ").trim();
     if (!s || s.length < 40) return false;
@@ -825,8 +879,12 @@ function paragraphsToHtml(paragraphs) {
 
 function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCookie, forcedToken) {
     LAST_DECRYPT_DEBUG = "";
-    if (!canUseJavaCrypto()) return "";
-    if (!chapterId || !cipherText || !contentMeta) return "";
+    if (!chapterId || !cipherText || !contentMeta) {
+        LAST_DECRYPT_DEBUG = "missing_input";
+        return "";
+    }
+
+    var hasJavaCrypto = canUseJavaCrypto();
 
     var enc = extractCipherObject(cipherText);
     if (!enc || !enc.l2) {
@@ -844,8 +902,12 @@ function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCooki
     }
 
     var ua = UserAgent.chrome() || "";
-    var deviceProof = "fallback-" + sha256Hex([ua, "vi-VN", "0", "0", "UTC"].join("|")).substring(0, 32);
-    var uaHash = sha256Hex(ua);
+    var deviceProof = "";
+    var uaHash = "";
+    if (hasJavaCrypto) {
+        deviceProof = "fallback-" + sha256Hex([ua, "vi-VN", "0", "0", "UTC"].join("|")).substring(0, 32);
+        uaHash = sha256Hex(ua);
+    }
 
     var resolveHeaders = {
         "user-agent": ua,
@@ -913,6 +975,11 @@ function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCooki
 
     var resolveReadable = resolveToReadableHtml(resolveObj);
     if (resolveReadable && resolveReadable.length > 30) return resolveReadable;
+
+    if (!hasJavaCrypto) {
+        LAST_DECRYPT_DEBUG = "no_java_crypto";
+        return "";
+    }
 
     var b64 = [];
     for (var k in enc) {
@@ -1386,6 +1453,7 @@ function execute(url) {
         }
         dbg("cookie=" + (runtimeCookie ? "1" : "0"));
         dbg("token=" + (runtimeToken ? "1" : "0"));
+        dbg("java_crypto=" + (canUseJavaCrypto() ? "1" : "0"));
 
         if (retryMode) {
             var refreshed = forceRefreshSession(url);
@@ -1456,6 +1524,13 @@ function execute(url) {
                 dbg("api_decrypt_exception=1");
                 dbg("api_decrypt_dbg=" + String(LAST_DECRYPT_DEBUG || ""));
             }
+
+            var scannedFromApi = scanReadableText(apiRaw || apiHtml || "");
+            dbg("api_scan_len=" + String((scannedFromApi || "").length));
+            if (scannedFromApi && scannedFromApi.length > 30) {
+                clearAuthRetryNeeded();
+                return Response.success(scannedFromApi);
+            }
         }
 
         if (apiHtml && isReadableHtml(apiHtml) && !isCipherLikeContent(apiHtml)) {
@@ -1508,6 +1583,13 @@ function execute(url) {
         }
 
         var html = extractHtmlContent(doc);
+
+        var scannedFromPage = scanReadableText((doc && doc.html ? doc.html() : "") || "");
+        dbg("page_scan_len=" + String((scannedFromPage || "").length));
+        if (scannedFromPage && scannedFromPage.length > 30) {
+            clearAuthRetryNeeded();
+            return Response.success(scannedFromPage);
+        }
 
         if (isReadableHtml(html) && !isCipherLikeContent(html)) {
             clearAuthRetryNeeded();
