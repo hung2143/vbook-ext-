@@ -796,6 +796,50 @@ function extractFromBrowserDomBySelectors(browser, url) {
     return "";
 }
 
+function extractFromBrowserDomHeuristic(browser) {
+    if (!browser) return "";
+
+    var fnNames = ["evaluate", "executeScript", "runScript", "eval"];
+    var script = "(function(){" +
+        "function badText(s){if(!s)return true;return /Yeu\\s*cau\\s*dang\\s*nhap|Yêu\\s*cầu\\s*đăng\\s*nhập|Ban\\s*can\\s*dang\\s*nhap|Bạn\\s*cần\\s*đăng\\s*nhập|Dang\\s*nhap|Đăng\\s*nhập|Login|Mã\\s*chương\\s*không\\s*hợp\\s*lệ/i.test(s);}" +
+        "function scoreNode(n){if(!n)return 0;var t=(n.innerText||n.textContent||'').replace(/\\s+/g,' ').trim();if(t.length<120)return 0;if(badText(t))return 0;var pCount=(n.querySelectorAll?n.querySelectorAll('p').length:0);var brCount=((n.innerHTML||'').match(/<br\\s*\\/?\\s*>/gi)||[]).length;return t.length + pCount*180 + brCount*40;}" +
+        "var root=document.body||document.documentElement;if(!root)return '';" +
+        "var candidates=[];" +
+        "var sel='article,main,section,div,[class*=chapter],[class*=reader],[class*=reading],[class*=content],[id*=chapter],[id*=content]';" +
+        "var nodes=[];try{nodes=Array.prototype.slice.call(root.querySelectorAll(sel));}catch(e){nodes=[];}" +
+        "if(nodes.length===0)nodes=[root];" +
+        "for(var i=0;i<nodes.length;i++){var n=nodes[i];if(!n)continue;var tag=(n.tagName||'').toLowerCase();if(/script|style|noscript|svg|canvas|header|footer|nav|aside/.test(tag))continue;var sc=scoreNode(n);if(sc>0)candidates.push({n:n,s:sc});}" +
+        "candidates.sort(function(a,b){return b.s-a.s;});" +
+        "for(var j=0;j<candidates.length;j++){var node=candidates[j].n;var html=(node.innerHTML||'').trim();var text=(node.innerText||node.textContent||'').replace(/\\s+/g,' ').trim();if(text.length<160)continue;if(badText(text))continue;return html||text;}" +
+        "var bodyText=(root.innerText||root.textContent||'').replace(/\\s+/g,' ').trim();if(bodyText.length>260 && !badText(bodyText)) return bodyText;" +
+        "return '';" +
+    "})()";
+
+    for (var i = 0; i < fnNames.length; i++) {
+        var fn = fnNames[i];
+        try {
+            if (typeof browser[fn] !== "function") continue;
+            var out = browser[fn](script);
+            if (out === undefined || out === null) continue;
+            var raw = String(out || "").trim();
+            if (!raw) continue;
+
+            var cleaned = cleanHtml(raw);
+            if (isReadableHtml(cleaned) && !isCipherLikeContent(cleaned)) {
+                return cleaned;
+            }
+
+            var text = htmlToText(cleaned || raw).replace(/\s+/g, " ").trim();
+            if (text.length > 220 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(text)) {
+                return plainTextToHtml(text);
+            }
+        } catch (_) {
+        }
+    }
+
+    return "";
+}
+
 function tryBrowserRenderedContent(url) {
     var browser = null;
     var htmlCandidates = [];
@@ -809,6 +853,12 @@ function tryBrowserRenderedContent(url) {
         if (domSelected) {
             try { browser.close(); } catch (_) {}
             return domSelected;
+        }
+
+        var heuristicDom = extractFromBrowserDomHeuristic(browser);
+        if (heuristicDom) {
+            try { browser.close(); } catch (_) {}
+            return heuristicDom;
         }
 
         try { htmlCandidates.push(String(browser.html() || "")); } catch (_) {}
