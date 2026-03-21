@@ -65,33 +65,13 @@ function buildTrangTruyenHeaders(extra) {
         "Referer": "https://trangtruyen.site/"
     };
 
-    try {
-        var cookie = localCookie.getCookie();
-        if (cookie) {
-            headers["Cookie"] = cookie;
-            headers["cookie"] = cookie;
-        }
-    } catch (_) {
-    }
-
-    try {
-        var token =
-            localStorage.getItem("trangtruyen_token") ||
-            localStorage.getItem("accessToken") ||
-            localStorage.getItem("token") ||
-            "";
-        if (token) {
-            var auth = /^Bearer\s+/i.test(token) ? token : ("Bearer " + token);
-            headers["Authorization"] = auth;
-            headers["authorization"] = auth;
-        }
-    } catch (_) {
-    }
-
     if (extra) {
         for (var k in extra) {
             if (!extra.hasOwnProperty(k)) continue;
-            headers[k] = extra[k];
+            if (extra[k] === undefined || extra[k] === null) continue;
+            var v = String(extra[k]);
+            if (!v) continue;
+            headers[k] = v;
         }
     }
 
@@ -135,16 +115,19 @@ function extractTokenFromCookie(cookie) {
 
 function buildApiAuthHeaders(token, cookie) {
     var h = {};
-    if (cookie) {
+    var c = String(cookie || "").trim();
+    var t = String(token || "").trim();
+
+    if (c) {
         h["Cookie"] = cookie;
         h["cookie"] = cookie;
     }
-    if (token) {
-        var auth = /^Bearer\s+/i.test(token) ? token : ("Bearer " + token);
+    if (t) {
+        var auth = /^Bearer\s+/i.test(t) ? t : ("Bearer " + t);
         h["Authorization"] = auth;
         h["authorization"] = auth;
-        h["x-access-token"] = token;
-        h["x-auth-token"] = token;
+        h["x-access-token"] = t;
+        h["x-auth-token"] = t;
     }
     return h;
 }
@@ -646,21 +629,23 @@ function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCooki
     var deviceProof = "fallback-" + sha256Hex([ua, "vi-VN", "0", "0", "UTC"].join("|")).substring(0, 32);
     var uaHash = sha256Hex(ua);
 
+    var resolveHeaders = {
+        "user-agent": ua,
+        "content-type": "application/json",
+        "x-device-proof": deviceProof,
+        "x-client-ua-hash": uaHash,
+        "origin": "https://trangtruyen.site"
+    };
+
+    var authHeaders = buildApiAuthHeaders(forcedToken, forcedCookie);
+    for (var hk in authHeaders) {
+        if (!authHeaders.hasOwnProperty(hk)) continue;
+        resolveHeaders[hk] = authHeaders[hk];
+    }
+
     var resolveRes = fetch("https://trangtruyen.site/api/chapters/" + chapterId + "/resolve", {
         method: "POST",
-        headers: buildTrangTruyenHeaders({
-            "user-agent": ua,
-            "content-type": "application/json",
-            "x-device-proof": deviceProof,
-            "x-client-ua-hash": uaHash,
-            "origin": "https://trangtruyen.site",
-            "Cookie": forcedCookie || "",
-            "cookie": forcedCookie || "",
-            "Authorization": forcedToken ? ((/^Bearer\s+/i.test(forcedToken) ? forcedToken : ("Bearer " + forcedToken))) : "",
-            "authorization": forcedToken ? ((/^Bearer\s+/i.test(forcedToken) ? forcedToken : ("Bearer " + forcedToken))) : "",
-            "x-access-token": forcedToken || "",
-            "x-auth-token": forcedToken || ""
-        }),
+        headers: buildTrangTruyenHeaders(resolveHeaders),
         body: JSON.stringify({ grantId: grantId, deviceProof: deviceProof, uaHash: uaHash })
     });
     if (!resolveRes.ok) return "";
@@ -718,12 +703,35 @@ function tryApiContent(url, forcedCookie, forcedToken) {
     if (!chapterId) return { content: "", requireLogin: false, chapterId: "", contentMetaV2: null };
 
     var response = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
-        headers: buildTrangTruyenHeaders(buildApiAuthHeaders(forcedToken, forcedCookie))
+        headers: buildTrangTruyenHeaders()
     });
+    if (!response.ok) {
+        if (forcedCookie || forcedToken) {
+            response = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
+                headers: buildTrangTruyenHeaders(buildApiAuthHeaders(forcedToken, forcedCookie))
+            });
+        }
+    }
     if (!response.ok) return { content: "", requireLogin: false, chapterId: chapterId, contentMetaV2: null };
 
     var json = response.json();
+    if ((!json || !json.chapter) && (forcedCookie || forcedToken)) {
+        var response2 = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
+            headers: buildTrangTruyenHeaders(buildApiAuthHeaders(forcedToken, forcedCookie))
+        });
+        if (response2.ok) json = response2.json();
+    }
     if (!json || !json.chapter) return { content: "", requireLogin: false, chapterId: chapterId, contentMetaV2: null };
+
+    if (json.requireLogin && (forcedCookie || forcedToken)) {
+        var retryAuthRes = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
+            headers: buildTrangTruyenHeaders(buildApiAuthHeaders(forcedToken, forcedCookie))
+        });
+        if (retryAuthRes.ok) {
+            var authJson = retryAuthRes.json();
+            if (authJson && authJson.chapter) json = authJson;
+        }
+    }
 
     var content = cleanHtml(json.chapter.content || "");
     if (content && content.indexOf("<") < 0) {
@@ -1055,7 +1063,7 @@ function execute(url) {
         }
 
         var pageResponse = fetch(url, {
-            headers: buildTrangTruyenHeaders(buildApiAuthHeaders(runtimeToken, runtimeCookie))
+            headers: buildTrangTruyenHeaders()
         });
 
         var apiRes = tryApiContent(url, runtimeCookie, runtimeToken);
