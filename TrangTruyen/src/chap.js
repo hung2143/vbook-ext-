@@ -1098,9 +1098,24 @@ function loginRequiredError(url) {
     return Response.error(ERROR_MESSAGE + "\n" + (url || BASE_SOURCE));
 }
 
+function loginRequiredErrorWithDebug(url, debugItems) {
+    markAuthRetryNeeded();
+    var tail = "";
+    if (debugItems && debugItems.length) {
+        tail = "\n[TTDBG] " + debugItems.join(" | ");
+    }
+    return Response.error(ERROR_MESSAGE + "\n" + (url || BASE_SOURCE) + tail);
+}
+
 function execute(url) {
     try {
+        var debug = [];
+        function dbg(s) {
+            try { debug.push(String(s)); } catch (_) {}
+        }
+
         var retryMode = isAuthRetryNeeded();
+        dbg("retry=" + (retryMode ? "1" : "0"));
         var runtimeCookie = getSessionCookie(url);
         var runtimeToken = "";
         try {
@@ -1112,17 +1127,24 @@ function execute(url) {
         } catch (_) {
             runtimeToken = extractTokenFromCookie(runtimeCookie) || "";
         }
+        dbg("cookie=" + (runtimeCookie ? "1" : "0"));
+        dbg("token=" + (runtimeToken ? "1" : "0"));
 
         if (retryMode) {
             var refreshed = forceRefreshSession(url);
             if (refreshed.cookie) runtimeCookie = refreshed.cookie;
             if (refreshed.token) runtimeToken = refreshed.token;
+            dbg("refresh=" + ((refreshed.cookie || refreshed.token) ? "1" : "0"));
         }
 
         if (!runtimeToken || !runtimeCookie) {
             var browserBoot = bootstrapAuthFromBrowser(url);
             if (browserBoot.cookie) runtimeCookie = browserBoot.cookie;
             if (browserBoot.token) runtimeToken = browserBoot.token;
+            dbg("boot_cookie=" + (browserBoot.cookie ? "1" : "0"));
+            dbg("boot_token=" + (browserBoot.token ? "1" : "0"));
+            dbg("boot_html_len=" + String((browserBoot.html || "").length));
+            dbg("boot_text_len=" + String((browserBoot.text || "").length));
 
             try {
                 if (runtimeToken) localStorage.setItem("trangtruyen_token", runtimeToken);
@@ -1149,11 +1171,15 @@ function execute(url) {
         var pageResponse = fetch(url, {
             headers: buildTrangTruyenHeaders()
         });
+        dbg("page_ok=" + (pageResponse && pageResponse.ok ? "1" : "0"));
 
         var apiRes = tryApiContent(url, runtimeCookie, runtimeToken);
         var apiHtml = apiRes && apiRes.content ? apiRes.content : "";
         var chapterId = (apiRes && apiRes.chapterId) ? apiRes.chapterId : extractChapterId(url);
         var apiMeta = apiRes ? apiRes.contentMetaV2 : null;
+        dbg("api_login=" + ((apiRes && apiRes.requireLogin) ? "1" : "0"));
+        dbg("api_html_len=" + String((apiHtml || "").length));
+        dbg("api_meta=" + (apiMeta ? "1" : "0"));
 
         if (apiHtml && isCipherLikeContent(apiHtml) && apiMeta) {
             try {
@@ -1173,17 +1199,26 @@ function execute(url) {
 
         if ((apiRes && apiRes.requireLogin) && (runtimeToken || hasAnyAuthCredential())) {
             var domBySession = tryBrowserRenderedContent(url);
+            dbg("dom_by_session_len=" + String((domBySession || "").length));
             if (domBySession && domBySession.length > 30) {
                 clearAuthRetryNeeded();
                 return Response.success(domBySession);
             }
         }
 
+        // Always try browser-rendered extraction once before returning login-required.
+        var domAny = tryBrowserRenderedContent(url);
+        dbg("dom_any_len=" + String((domAny || "").length));
+        if (domAny && domAny.length > 30) {
+            clearAuthRetryNeeded();
+            return Response.success(domAny);
+        }
+
         if (!pageResponse.ok) {
             if (apiRes && apiRes.requireLogin) {
-                return loginRequiredError(url);
+                return loginRequiredErrorWithDebug(url, debug);
             }
-            return loginRequiredError(url);
+            return loginRequiredErrorWithDebug(url, debug);
         }
 
         var doc = pageResponse.html("utf-8");
@@ -1223,35 +1258,38 @@ function execute(url) {
         if (/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(text) || (apiRes && apiRes.requireLogin)) {
             if (retryMode) {
                 var browserHtml = tryBrowserRenderedContent(url);
+                dbg("dom_retry_login_len=" + String((browserHtml || "").length));
                 if (browserHtml && browserHtml.length > 30) {
                     clearAuthRetryNeeded();
                     return Response.success(browserHtml);
                 }
             }
-            return loginRequiredError(url);
+            return loginRequiredErrorWithDebug(url, debug);
         }
 
         if ((apiHtml && isCipherLikeContent(apiHtml)) || isCipherLikeContent(html)) {
             if (retryMode) {
                 var browserCipherFallback = tryBrowserRenderedContent(url);
+                dbg("dom_retry_cipher_len=" + String((browserCipherFallback || "").length));
                 if (browserCipherFallback && browserCipherFallback.length > 30) {
                     clearAuthRetryNeeded();
                     return Response.success(browserCipherFallback);
                 }
             }
-            return loginRequiredError(url);
+            return loginRequiredErrorWithDebug(url, debug);
         }
 
         if (retryMode) {
             var browserFinalFallback = tryBrowserRenderedContent(url);
+            dbg("dom_retry_final_len=" + String((browserFinalFallback || "").length));
             if (browserFinalFallback && browserFinalFallback.length > 30) {
                 clearAuthRetryNeeded();
                 return Response.success(browserFinalFallback);
             }
         }
 
-        return loginRequiredError(url);
+        return loginRequiredErrorWithDebug(url, debug);
     } catch (e) {
-        return Response.error(ERROR_MESSAGE + "\n" + (url || BASE_SOURCE));
+        return Response.error(ERROR_MESSAGE + "\n" + (url || BASE_SOURCE) + "\n[TTDBG] exception=" + String((e && e.message) || e || "unknown"));
     }
 }
