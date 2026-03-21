@@ -185,9 +185,24 @@ function bootstrapAuthFromBrowser(url) {
         browser = Engine.newBrowser();
 
         for (var i = 0; i < launchUrls.length; i++) {
+            var launchDoc = null;
             try {
-                browser.launch(launchUrls[i], 12000);
+                launchDoc = browser.launch(launchUrls[i], 12000);
             } catch (_) {
+            }
+
+            if (launchDoc) {
+                if (!html) {
+                    var fromDoc = extractFromBrowserLaunchDocument(launchDoc, url);
+                    if (fromDoc) html = fromDoc;
+                }
+                if (!text) {
+                    try {
+                        text = String(launchDoc.text() || "").replace(/\s+/g, " ").trim();
+                    } catch (_) {
+                        text = text || "";
+                    }
+                }
             }
 
             if (!cookie) {
@@ -945,6 +960,67 @@ function extractFromBrowserDomHeuristic(browser) {
     return "";
 }
 
+function extractFromBrowserLaunchDocument(doc, url) {
+    if (!doc) return "";
+
+    var selectors = getUrlSpecificDomSelectors(url);
+    for (var i = 0; i < selectors.length; i++) {
+        var nodes = null;
+        try {
+            nodes = doc.select(selectors[i]);
+        } catch (_) {
+            nodes = null;
+        }
+        if (!nodes || !nodes.size || nodes.size() === 0) continue;
+
+        for (var j = 0; j < nodes.size(); j++) {
+            var node = nodes.get(j);
+            if (!node) continue;
+
+            var rawHtml = "";
+            var rawText = "";
+            try { rawHtml = String(node.html() || ""); } catch (_) {}
+            try { rawText = String(node.text() || ""); } catch (_) {}
+
+            if (rawHtml) {
+                var cleaned = cleanHtml(rawHtml);
+                if (isReadableHtml(cleaned) && !isCipherLikeContent(cleaned)) {
+                    return cleaned;
+                }
+
+                var textFromHtml = htmlToText(cleaned || "").replace(/\s+/g, " ").trim();
+                if (textFromHtml.length > 180 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(textFromHtml)) {
+                    return plainTextToHtml(textFromHtml);
+                }
+            }
+
+            if (rawText) {
+                var normalized = rawText.replace(/\s+/g, " ").trim();
+                if (normalized.length > 180 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(normalized)) {
+                    return plainTextToHtml(normalized);
+                }
+            }
+        }
+    }
+
+    try {
+        var pageHtml = String(doc.html() || "");
+        var fromRaw = extractChapterFromRawHtml(pageHtml);
+        if (fromRaw) return fromRaw;
+    } catch (_) {
+    }
+
+    try {
+        var pageText = String(doc.text() || "").replace(/\s+/g, " ").trim();
+        if (pageText.length > 260 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(pageText)) {
+            return plainTextToHtml(pageText);
+        }
+    } catch (_) {
+    }
+
+    return "";
+}
+
 function tryBrowserRenderedContent(url) {
     var browser = null;
     var htmlCandidates = [];
@@ -964,7 +1040,15 @@ function tryBrowserRenderedContent(url) {
 
     try {
         browser = Engine.newBrowser();
-        browser.launch(url, 12000);
+        var launchDoc = browser.launch(url, 12000);
+
+        if (launchDoc) {
+            var fromLaunchDoc = extractFromBrowserLaunchDocument(launchDoc, url);
+            if (fromLaunchDoc) {
+                try { browser.close(); } catch (_) {}
+                return fromLaunchDoc;
+            }
+        }
 
         var domSelected = extractFromBrowserDomBySelectors(browser, url);
         if (domSelected) {
