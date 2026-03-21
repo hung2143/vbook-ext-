@@ -168,6 +168,103 @@ function getSessionCookie(url) {
     return cookie || "";
 }
 
+function readBrowserRuntimeValue(browser, script) {
+    if (!browser || !script) return "";
+    var fnNames = ["evaluate", "executeScript", "runScript", "eval"];
+    for (var i = 0; i < fnNames.length; i++) {
+        var fn = fnNames[i];
+        try {
+            if (typeof browser[fn] !== "function") continue;
+            var out = browser[fn](script);
+            if (out !== undefined && out !== null) {
+                var s = String(out || "");
+                if (s) return s;
+            }
+        } catch (_) {
+        }
+    }
+    return "";
+}
+
+function bootstrapAuthFromBrowser(url) {
+    var browser = null;
+    var cookie = "";
+    var token = "";
+    var html = "";
+    var text = "";
+
+    var launchUrls = [
+        String(url || BASE_SOURCE),
+        String(url || BASE_SOURCE) + (String(url || BASE_SOURCE).indexOf("?") >= 0 ? "&" : "?") + "vbook_rt=" + Date.now()
+    ];
+
+    try {
+        browser = Engine.newBrowser();
+
+        for (var i = 0; i < launchUrls.length; i++) {
+            try {
+                browser.launch(launchUrls[i], 12000);
+            } catch (_) {
+            }
+
+            if (!cookie) {
+                cookie = readBrowserRuntimeValue(browser,
+                    "(function(){try{return document.cookie||'';}catch(e){return '';}})()"
+                ) || "";
+            }
+
+            if (!token) {
+                token = readBrowserRuntimeValue(browser,
+                    "(function(){try{" +
+                    "var ks=['trangtruyen_token','accessToken','access_token','token','authToken','auth_token','jwt'];" +
+                    "for(var i=0;i<ks.length;i++){var v=localStorage.getItem(ks[i]);if(v)return v;}" +
+                    "return '';" +
+                    "}catch(e){return '';}})()"
+                ) || "";
+            }
+
+            if (!html) {
+                html = readBrowserRuntimeValue(browser,
+                    "(function(){try{" +
+                    "var sels=['.chapter-content','.reader-content','.chapter-body','#chapter-content','#reader-content','#chapter-body','[data-chapter-content]','[data-reader-content]','article','main'];" +
+                    "for(var i=0;i<sels.length;i++){var n=document.querySelector(sels[i]);if(n&&n.innerHTML&&n.innerHTML.length>80)return n.innerHTML;}" +
+                    "return (document.body&&document.body.innerHTML)||'';" +
+                    "}catch(e){return '';}})()"
+                ) || "";
+            }
+
+            if (!text) {
+                text = readBrowserRuntimeValue(browser,
+                    "(function(){try{" +
+                    "var sels=['.chapter-content','.reader-content','.chapter-body','#chapter-content','#reader-content','#chapter-body','[data-chapter-content]','[data-reader-content]','article','main'];" +
+                    "for(var i=0;i<sels.length;i++){var n=document.querySelector(sels[i]);if(n){var t=(n.innerText||n.textContent||'').replace(/\\s+/g,' ').trim();if(t.length>120)return t;}}" +
+                    "return ((document.body&&document.body.innerText)||'').replace(/\\s+/g,' ').trim();" +
+                    "}catch(e){return '';}})()"
+                ) || "";
+            }
+
+            if (token && (html || text)) break;
+        }
+    } catch (_) {
+    }
+
+    try {
+        if (browser) browser.close();
+    } catch (_) {
+    }
+
+    if (!token && cookie) {
+        token = extractTokenFromCookie(cookie);
+    }
+
+    return {
+        cookie: String(cookie || ""),
+        token: String(token || ""),
+        html: String(html || ""),
+        text: String(text || "")
+    };
+}
+
 function hasAnyAuthCredential() {
     try {
         var cookie = localCookie.getCookie();
@@ -845,9 +942,21 @@ function tryBrowserRenderedContent(url) {
     var htmlCandidates = [];
     var textCandidates = [];
 
+    var runtime = bootstrapAuthFromBrowser(url);
+    if (runtime && runtime.html) {
+        var fromRuntimeHtml = extractChapterFromRawHtml(runtime.html);
+        if (fromRuntimeHtml) return fromRuntimeHtml;
+    }
+    if (runtime && runtime.text) {
+        var runtimeText = String(runtime.text || "").replace(/\s+/g, " ").trim();
+        if (runtimeText.length > 240 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(runtimeText)) {
+            return plainTextToHtml(runtimeText);
+        }
+    }
+
     try {
         browser = Engine.newBrowser();
-        browser.launch(url, 9000);
+        browser.launch(url, 12000);
 
         var domSelected = extractFromBrowserDomBySelectors(browser, url);
         if (domSelected) {
@@ -918,6 +1027,33 @@ function execute(url) {
             if (refreshed.token) runtimeToken = refreshed.token;
         }
 
+        if (!runtimeToken || !runtimeCookie) {
+            var browserBoot = bootstrapAuthFromBrowser(url);
+            if (browserBoot.cookie) runtimeCookie = browserBoot.cookie;
+            if (browserBoot.token) runtimeToken = browserBoot.token;
+
+            try {
+                if (runtimeToken) localStorage.setItem("trangtruyen_token", runtimeToken);
+            } catch (_) {
+            }
+
+            if (browserBoot.html) {
+                var bootHtml = extractChapterFromRawHtml(browserBoot.html);
+                if (bootHtml && isReadableHtml(bootHtml) && !isCipherLikeContent(bootHtml)) {
+                    clearAuthRetryNeeded();
+                    return Response.success(bootHtml);
+                }
+            }
+
+            if (browserBoot.text) {
+                var bootText = String(browserBoot.text || "").replace(/\s+/g, " ").trim();
+                if (bootText.length > 240 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(bootText)) {
+                    clearAuthRetryNeeded();
+                    return Response.success(plainTextToHtml(bootText));
+                }
+            }
+        }
+
         var pageResponse = fetch(url, {
             headers: buildTrangTruyenHeaders(buildApiAuthHeaders(runtimeToken, runtimeCookie))
         });
@@ -941,6 +1077,14 @@ function execute(url) {
         if (apiHtml && isReadableHtml(apiHtml) && !isCipherLikeContent(apiHtml)) {
             clearAuthRetryNeeded();
             return Response.success(apiHtml);
+        }
+
+        if ((apiRes && apiRes.requireLogin) && (runtimeToken || hasAnyAuthCredential())) {
+            var domBySession = tryBrowserRenderedContent(url);
+            if (domBySession && domBySession.length > 30) {
+                clearAuthRetryNeeded();
+                return Response.success(domBySession);
+            }
         }
 
         if (!pageResponse.ok) {
