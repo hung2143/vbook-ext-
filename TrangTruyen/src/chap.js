@@ -1,9 +1,20 @@
-function cleanHtml(html) {
+// ============================================================
+// TrangTruyen - chap.js (v2)
+// Lấy nội dung chương từ trangtruyen.site
+// ============================================================
+
+var BASE_URL = "https://trangtruyen.site";
+var ERROR_LOGIN = "Vui lòng vào trang nguồn " + BASE_URL + ", đăng nhập, rồi quay lại nhấn Tải lại.";
+
+// ---- Utility functions ----
+
+function cleanContent(html) {
     if (!html) return "";
+    // Xoá zero-width characters (watermark của trang)
+    html = html.replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF\u00AD]/g, "");
     html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
     html = html.replace(/<style[\s\S]*?<\/style>/gi, "");
     html = html.replace(/<form[\s\S]*?<\/form>/gi, "");
-    html = html.replace(/<div[^>]*class=["'][^"']*(comment|login|ads?|related)[^"']*["'][\s\S]*?<\/div>/gi, "");
     return html;
 }
 
@@ -14,405 +25,76 @@ function htmlToText(html) {
         .replace(/<\/p\s*>/gi, "\n")
         .replace(/<[^>]+>/g, " ")
         .replace(/&nbsp;/gi, " ")
+        .replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "")
         .replace(/\s+/g, " ")
         .trim();
 }
 
-function isReadableHtml(html) {
-    if (!html) return false;
-    if (!/<p[\s>]|<br\s*\/?\s*>|<div[^>]*chapter|<article[\s>]/i.test(html)) return false;
-    var text = htmlToText(html);
-    if (!text || text.length < 30) return false;
-    if (/^(đăng nhập|login|sign in)$/i.test(text)) return false;
-    if (/Trang\s*Truyện\s*Đọc\s*nhanh|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(text)) return false;
-    return true;
-}
-
 function plainTextToHtml(text) {
     if (!text) return "";
-    var lines = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split(/\n+/g);
+    var lines = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split(/\n+/);
     var out = [];
     for (var i = 0; i < lines.length; i++) {
         var line = (lines[i] || "").trim();
-        if (!line) continue;
-        out.push("<p>" + line + "</p>");
+        if (line) out.push("<p>" + line + "</p>");
     }
     return out.join("\n");
 }
 
-function normalizeInvisibleChars(s) {
-    return String(s || "")
-        .replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "")
-        .replace(/\\u00a0/gi, " ")
-        .replace(/&nbsp;/gi, " ");
-}
-
-function tryDecodeEscapedString(s) {
-    var raw = String(s || "");
-    if (!raw) return "";
-    try {
-        return JSON.parse('"' + raw.replace(/\\/g, "\\\\").replace(/\"/g, '\\\"') + '"');
-    } catch (_) {
-        return raw;
-    }
-}
-
-function isLikelyUiNoise(line) {
-    if (!line) return true;
-    return /^(Đăng nhập|Login|Sign in|Mục lục|Cài đặt|Bản quyền|Trang Truyện|Tải lại|Xem trang nguồn|Trước|Sau)$/i.test(line) ||
-        /Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(line);
-}
-
-function scanReadableText(raw) {
-    var blob = normalizeInvisibleChars(tryDecodeEscapedString(raw || ""));
-    if (!blob) return "";
-
-    blob = blob
-        .replace(/\\r\\n|\\n|\\r/g, "\n")
-        .replace(/<br\s*\/?\s*>/gi, "\n")
-        .replace(/<\/p\s*>/gi, "\n")
-        .replace(/<[^>]+>/g, " ");
-
-    var chunks = blob.split(/[\n\t]+/g);
-    var kept = [];
-    for (var i = 0; i < chunks.length; i++) {
-        var line = String(chunks[i] || "").replace(/\s+/g, " ").trim();
-        if (!line || line.length < 24) continue;
-        if (isLikelyUiNoise(line)) continue;
-        if (/^[A-Za-z0-9+/=:_{}\[\]"',.-]+$/.test(line) && !/[À-ỹà-ỹ]/.test(line)) continue;
-        kept.push(line);
-    }
-
-    if (kept.length < 3) return "";
-
-    var merged = kept.join("\n");
-    var html = plainTextToHtml(merged);
-    if (!html) return "";
-
-    var txt = htmlToText(html);
-    if (txt.length < 120) return "";
-    return html;
-}
-
-function isCipherLikeContent(html) {
-    var s = htmlToText(html || "").replace(/\s+/g, " ").trim();
-    if (!s || s.length < 40) return false;
-    if (/"v"\s*:\s*\d+/i.test(s) && /"l2"\s*:/i.test(s) && /[A-Za-z0-9+/=]{120,}/.test(s)) return true;
-    if (/\{[^{}]*"v"\s*:\s*\d+[^{}]*"l2"\s*:/i.test(s) && /[A-Za-z0-9+/=]{120,}/.test(s)) return true;
-    if (/"l2"\s*:\s*"[A-Za-z0-9+/=]{200,}"/i.test(s)) return true;
-    return false;
+function safeJsonParse(s) {
+    try { return JSON.parse(s); } catch (_) { return null; }
 }
 
 function extractChapterId(url) {
-    var m = (url || "").match(/\/read\/([^\/?#]+)/i);
+    var m = (url || "").match(/\/read\/([^/?#]+)/i);
     return m ? m[1] : "";
 }
 
-var BASE_SOURCE = "https://trangtruyen.site";
-var ERROR_MESSAGE = "Vui lòng vào trang nguồn " + BASE_SOURCE + ", đăng nhập rồi quay lại tải lại chương để đọc tiếp.";
-var AUTH_RETRY_KEY = "trangtruyen_auth_retry";
-var AUTH_RETRY_TTL_MS = 10 * 60 * 1000;
-var LAST_DECRYPT_DEBUG = "";
-
-function buildTrangTruyenHeaders(extra) {
-    var headers = {
-        "User-Agent": UserAgent.chrome(),
-        "Referer": "https://trangtruyen.site/"
-    };
-
-    if (extra) {
-        for (var k in extra) {
-            if (!extra.hasOwnProperty(k)) continue;
-            if (extra[k] === undefined || extra[k] === null) continue;
-            var v = String(extra[k]);
-            if (!v) continue;
-            headers[k] = v;
-        }
-    }
-
-    return headers;
+function isLoginRequired(text) {
+    return /đăng nhập|yêu cầu đăng|cần đăng nhập|login required|sign in/i.test(text || "");
 }
 
-function extractRequestCookie(response) {
+function isGoodContent(text) {
+    if (!text || text.length < 80) return false;
+    if (isLoginRequired(text)) return false;
+    return true;
+}
+
+// ---- Lấy Cookie từ vBook ----
+// vBook tự động gửi cookie của domain khi fetch request
+// Lấy qua res.request.headers.cookie
+
+function getSiteCookie(url) {
+    // Cách 1: localCookie API
     try {
-        if (!response || !response.request || !response.request.headers) return "";
-        var h = response.request.headers;
-        return String(h.cookie || h.Cookie || "");
-    } catch (_) {
-        return "";
-    }
-}
+        var c = localCookie.getCookie();
+        if (c && c.indexOf("trangtruyen") !== -1) return String(c);
+        if (c && c.length > 10) return String(c);
+    } catch (_) {}
 
-function parseCookieValue(cookie, key) {
-    if (!cookie || !key) return "";
-    var re = new RegExp("(?:^|;\\s*)" + key.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&") + "=([^;]+)", "i");
-    var m = String(cookie).match(re);
-    return m ? String(m[1] || "") : "";
-}
+    // Cách 2: Lấy từ request cookie khi fetch trang
+    try {
+        var probeUrl = url || (BASE_URL + "/");
+        var res = fetch(probeUrl, {
+            headers: {
+                "User-Agent": UserAgent.chrome(),
+                "Referer": BASE_URL + "/"
+            }
+        });
+        if (res && res.request && res.request.headers) {
+            var h = res.request.headers;
+            var ck = h.cookie || h.Cookie || h["Cookie"] || "";
+            if (ck && ck.length > 5) return String(ck);
+        }
+    } catch (_) {}
 
-function extractTokenFromCookie(cookie) {
-    if (!cookie) return "";
-    var keys = [
-        "accessToken",
-        "access_token",
-        "token",
-        "authToken",
-        "auth_token",
-        "jwt",
-        "id_token"
-    ];
-    for (var i = 0; i < keys.length; i++) {
-        var v = parseCookieValue(cookie, keys[i]);
-        if (v) return v;
-    }
     return "";
 }
 
-function buildApiAuthHeaders(token, cookie) {
-    var h = {};
-    var c = String(cookie || "").trim();
-    var t = String(token || "").trim();
-
-    if (c) {
-        h["Cookie"] = cookie;
-        h["cookie"] = cookie;
-    }
-    if (t) {
-        var auth = /^Bearer\s+/i.test(t) ? t : ("Bearer " + t);
-        h["Authorization"] = auth;
-        h["authorization"] = auth;
-        h["x-access-token"] = t;
-        h["x-auth-token"] = t;
-    }
-    return h;
-}
-
-function getSessionCookie(url) {
-    var cookie = "";
-
-    try {
-        cookie = localCookie.getCookie() || "";
-    } catch (_) {
-    }
-    if (cookie) return cookie;
-
-    try {
-        var probe = fetch(url, { headers: buildTrangTruyenHeaders() });
-        cookie = extractRequestCookie(probe);
-    } catch (_) {
-    }
-    if (cookie) return cookie;
-
-    return cookie || "";
-}
-
-function readBrowserRuntimeValue(browser, script) {
-    if (!browser || !script) return "";
-    var fnNames = ["evaluate", "executeScript", "runScript", "eval"];
-    for (var i = 0; i < fnNames.length; i++) {
-        var fn = fnNames[i];
-        try {
-            if (typeof browser[fn] !== "function") continue;
-            var out = browser[fn](script);
-            if (out !== undefined && out !== null) {
-                var s = String(out || "");
-                if (s) return s;
-            }
-        } catch (_) {
-        }
-    }
-    return "";
-}
-
-function bootstrapAuthFromBrowser(url) {
-    var browser = null;
-    var cookie = "";
-    var token = "";
-    var html = "";
-    var text = "";
-
-    var launchUrls = [
-        String(url || BASE_SOURCE),
-        String(url || BASE_SOURCE) + (String(url || BASE_SOURCE).indexOf("?") >= 0 ? "&" : "?") + "vbook_rt=" + Date.now()
-    ];
-
-    try {
-        browser = Engine.newBrowser();
-
-        for (var i = 0; i < launchUrls.length; i++) {
-            var launchDoc = null;
-            try {
-                launchDoc = browser.launch(launchUrls[i], 12000);
-            } catch (_) {
-            }
-
-            if (launchDoc) {
-                if (!html) {
-                    var fromDoc = extractFromBrowserLaunchDocument(launchDoc, url);
-                    if (fromDoc) html = fromDoc;
-                }
-                if (!text) {
-                    try {
-                        text = String(launchDoc.text() || "").replace(/\s+/g, " ").trim();
-                    } catch (_) {
-                        text = text || "";
-                    }
-                }
-            }
-
-            if (!cookie) {
-                cookie = readBrowserRuntimeValue(browser,
-                    "(function(){try{return document.cookie||'';}catch(e){return '';}})()"
-                ) || "";
-            }
-
-            if (!token) {
-                token = readBrowserRuntimeValue(browser,
-                    "(function(){try{" +
-                    "var ks=['trangtruyen_token','accessToken','access_token','token','authToken','auth_token','jwt'];" +
-                    "for(var i=0;i<ks.length;i++){var v=localStorage.getItem(ks[i]);if(v)return v;}" +
-                    "return '';" +
-                    "}catch(e){return '';}})()"
-                ) || "";
-            }
-
-            if (!html) {
-                html = readBrowserRuntimeValue(browser,
-                    "(function(){try{" +
-                    "var sels=['.chapter-content','.reader-content','.chapter-body','#chapter-content','#reader-content','#chapter-body','[data-chapter-content]','[data-reader-content]','article','main'];" +
-                    "for(var i=0;i<sels.length;i++){var n=document.querySelector(sels[i]);if(n&&n.innerHTML&&n.innerHTML.length>80)return n.innerHTML;}" +
-                    "return (document.body&&document.body.innerHTML)||'';" +
-                    "}catch(e){return '';}})()"
-                ) || "";
-            }
-
-            if (!text) {
-                text = readBrowserRuntimeValue(browser,
-                    "(function(){try{" +
-                    "var sels=['.chapter-content','.reader-content','.chapter-body','#chapter-content','#reader-content','#chapter-body','[data-chapter-content]','[data-reader-content]','article','main'];" +
-                    "for(var i=0;i<sels.length;i++){var n=document.querySelector(sels[i]);if(n){var t=(n.innerText||n.textContent||'').replace(/\\s+/g,' ').trim();if(t.length>120)return t;}}" +
-                    "return ((document.body&&document.body.innerText)||'').replace(/\\s+/g,' ').trim();" +
-                    "}catch(e){return '';}})()"
-                ) || "";
-            }
-
-            if (token && (html || text)) break;
-        }
-    } catch (_) {
-    }
-
-    try {
-        if (browser) browser.close();
-    } catch (_) {
-    }
-
-    if (!token && cookie) {
-        token = extractTokenFromCookie(cookie);
-    }
-
-    return {
-        cookie: String(cookie || ""),
-        token: String(token || ""),
-        html: String(html || ""),
-        text: String(text || "")
-    };
-}
-
-function hasAnyAuthCredential() {
-    try {
-        var cookie = localCookie.getCookie();
-        if (cookie && /(?:session|token|auth|jwt|user)/i.test(cookie)) return true;
-    } catch (_) {
-    }
-
-    try {
-        var token =
-            localStorage.getItem("trangtruyen_token") ||
-            localStorage.getItem("accessToken") ||
-            localStorage.getItem("token") ||
-            "";
-        if (token) return true;
-    } catch (_) {
-    }
-
-    return false;
-}
-
-function markAuthRetryNeeded() {
-    try {
-        localStorage.setItem(AUTH_RETRY_KEY, String(Date.now()));
-    } catch (_) {
-    }
-}
-
-function clearAuthRetryNeeded() {
-    try {
-        localStorage.removeItem(AUTH_RETRY_KEY);
-    } catch (_) {
-    }
-}
-
-function isAuthRetryNeeded() {
-    try {
-        var v = localStorage.getItem(AUTH_RETRY_KEY);
-        if (!v) return false;
-        var ts = parseInt(v, 10);
-        if (isNaN(ts)) return false;
-        if (Date.now() - ts > AUTH_RETRY_TTL_MS) {
-            localStorage.removeItem(AUTH_RETRY_KEY);
-            return false;
-        }
-        return true;
-    } catch (_) {
-        return false;
-    }
-}
-
-function forceRefreshSession(url) {
-    var cookie = "";
-    var token = "";
-
-    try {
-        var browser = Engine.newBrowser();
-        browser.launch((url || BASE_SOURCE) + (String(url || BASE_SOURCE).indexOf("?") >= 0 ? "&" : "?") + "vbook_sync=" + Date.now(), 5000);
-        browser.close();
-    } catch (_) {
-    }
-
-    try {
-        cookie = localCookie.getCookie() || "";
-    } catch (_) {
-    }
-
-    if (!cookie) {
-        try {
-            var probe = fetch((url || BASE_SOURCE) + (String(url || BASE_SOURCE).indexOf("?") >= 0 ? "&" : "?") + "vbook_probe=" + Date.now(), {
-                headers: buildTrangTruyenHeaders()
-            });
-            cookie = extractRequestCookie(probe);
-        } catch (_) {
-        }
-    }
-
-    token = extractTokenFromCookie(cookie);
-    if (!token) {
-        try {
-            token =
-                localStorage.getItem("trangtruyen_token") ||
-                localStorage.getItem("accessToken") ||
-                localStorage.getItem("token") ||
-                "";
-        } catch (_) {
-            token = "";
-        }
-    }
-
-    return { cookie: cookie || "", token: token || "" };
-}
+// ---- Java Crypto (AES-GCM) ----
 
 function canUseJavaCrypto() {
     try {
-        Java.type("java.security.MessageDigest");
         Java.type("javax.crypto.Cipher");
         Java.type("java.util.Base64");
         return true;
@@ -422,24 +104,22 @@ function canUseJavaCrypto() {
 }
 
 function sha256Hex(input) {
-    var MessageDigest = Java.type("java.security.MessageDigest");
-    var StandardCharsets = Java.type("java.nio.charset.StandardCharsets");
-    var md = MessageDigest.getInstance("SHA-256");
-    var bytes = md.digest(new java.lang.String(String(input || "")).getBytes(StandardCharsets.UTF_8));
-    var sb = new java.lang.StringBuilder();
-    for (var i = 0; i < bytes.length; i++) {
-        var b = bytes[i];
-        if (b < 0) b += 256;
-        var h = java.lang.Integer.toHexString(b);
-        if (h.length() === 1) sb.append("0");
-        sb.append(h);
+    try {
+        var MD = Java.type("java.security.MessageDigest");
+        var CS = Java.type("java.nio.charset.StandardCharsets");
+        var md = MD.getInstance("SHA-256");
+        var bytes = md.digest(new java.lang.String(String(input || "")).getBytes(CS.UTF_8));
+        var sb = new java.lang.StringBuilder();
+        for (var i = 0; i < bytes.length; i++) {
+            var b = bytes[i]; if (b < 0) b += 256;
+            var h = java.lang.Integer.toHexString(b);
+            if (h.length() === 1) sb.append("0");
+            sb.append(h);
+        }
+        return String(sb.toString());
+    } catch (_) {
+        return "a".repeat(64);
     }
-    return String(sb.toString());
-}
-
-function decodeBase64Bytes(s) {
-    var Base64 = Java.type("java.util.Base64");
-    return Base64.getDecoder().decode(String(s || ""));
 }
 
 function hexToBytes(hex) {
@@ -452,1192 +132,402 @@ function hexToBytes(hex) {
     return out;
 }
 
-function concatBytes(a, b) {
-    var out = Java.type("byte[]")(a.length + b.length);
-    java.lang.System.arraycopy(a, 0, out, 0, a.length);
-    java.lang.System.arraycopy(b, 0, out, a.length, b.length);
-    return out;
+function b64ToBytes(s) {
+    return Java.type("java.util.Base64").getDecoder().decode(String(s || "").replace(/\s/g, ""));
 }
 
-function aesGcmDecryptBase64Parts(part1, ivPart, part2, keyHex) {
+function aesGcmDecrypt(data, iv, keyHex) {
+    // data: byte[], iv: byte[], keyHex: hex string
     var Cipher = Java.type("javax.crypto.Cipher");
-    var SecretKeySpec = Java.type("javax.crypto.spec.SecretKeySpec");
-    var GCMParameterSpec = Java.type("javax.crypto.spec.GCMParameterSpec");
-    var StandardCharsets = Java.type("java.nio.charset.StandardCharsets");
-
-    var p1 = decodeBase64Bytes(part1);
-    var iv = decodeBase64Bytes(ivPart);
-    var p2 = decodeBase64Bytes(part2);
-    var all = concatBytes(p1, p2);
+    var SKS = Java.type("javax.crypto.spec.SecretKeySpec");
+    var GCM = Java.type("javax.crypto.spec.GCMParameterSpec");
+    var CS = Java.type("java.nio.charset.StandardCharsets");
     var key = hexToBytes(keyHex);
-
-    var cipher = Cipher.getInstance("AES/GCM/NoPadding");
-    cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
-    var plain = cipher.doFinal(all);
-    return String(new java.lang.String(plain, StandardCharsets.UTF_8));
+    var c = Cipher.getInstance("AES/GCM/NoPadding");
+    c.init(Cipher.DECRYPT_MODE, new SKS(key, "AES"), new GCM(128, iv));
+    var plain = c.doFinal(data);
+    return String(new java.lang.String(plain, CS.UTF_8));
 }
 
-function pickFirstValue(obj, names) {
-    if (!obj) return "";
-    for (var i = 0; i < names.length; i++) {
-        var k = names[i];
-        if (obj[k] !== undefined && obj[k] !== null && String(obj[k]) !== "") return String(obj[k]);
-    }
-    return "";
-}
+// ---- Giải mã nội dung v3 ----
+// chapter.content = JSON string: {"v":3,"l2":"<b64>","m":"..."}
+// l2 = IV(12 bytes) + ciphertext + GCM tag (16 bytes), key = grantSecret (hex 64 chars)
+// Sau khi decrypt l2 → JSON {"d":"<b64>","i":"<b64>","g":"<hex>"} (stage 1)
+// Stage 2: AES-GCM decrypt d với iv=b64(i), key=hex(g)
+// → {"paragraphs":["..."]} hoặc text
 
-function pickFirstValueDeep(obj, names) {
-    if (!obj || !names || !names.length) return "";
-    for (var i = 0; i < names.length; i++) {
-        var hit = findFirstKeyDeep(obj, names[i]);
-        if (hit !== null && hit !== undefined && String(hit) !== "") return String(hit);
-    }
-    return "";
-}
+function decryptChapterContent(contentStr, grantSecretHex) {
+    if (!contentStr || !grantSecretHex) return "";
+    if (!canUseJavaCrypto()) return "";
 
-function collectValueCandidates(obj) {
-    var vals = [];
-    var seen = {};
-
-    function walk(node, depth) {
-        if (node === undefined || node === null) return;
-        if (depth > 8) return;
-
-        var t = typeof node;
-        if (t === "string" || t === "number" || t === "boolean") {
-            var s = String(node);
-            if (!s) return;
-            if (!seen[s]) {
-                seen[s] = true;
-                vals.push(s);
-            }
-            return;
-        }
-
-        if (Array.isArray(node)) {
-            for (var i = 0; i < node.length; i++) walk(node[i], depth + 1);
-            return;
-        }
-
-        if (t === "object") {
-            for (var k in node) {
-                if (!node.hasOwnProperty(k)) continue;
-                walk(node[k], depth + 1);
-            }
-        }
-    }
-
-    walk(obj, 0);
-    return vals;
-}
-
-function bytesToHex(bytes) {
-    if (!bytes || !bytes.length) return "";
-    var sb = new java.lang.StringBuilder();
-    for (var i = 0; i < bytes.length; i++) {
-        var b = bytes[i];
-        if (b < 0) b += 256;
-        var h = java.lang.Integer.toHexString(b);
-        if (h.length() === 1) sb.append("0");
-        sb.append(h);
-    }
-    return String(sb.toString());
-}
-
-function collectDirectHexKeys(resolveObj, metaObj) {
-    var vals = collectValueCandidates(resolveObj).concat(collectValueCandidates(metaObj));
-    var out = [];
-    var seen = {};
-    for (var i = 0; i < vals.length; i++) {
-        var s = String(vals[i] || "").trim();
-        if (!s) continue;
-
-        if (/^[0-9a-f]{64}$/i.test(s)) {
-            var h1 = s.toLowerCase();
-            if (!seen[h1]) {
-                seen[h1] = true;
-                out.push(h1);
-            }
-        }
-
-        if (/^[A-Za-z0-9+/=]{24,}$/i.test(s)) {
-            try {
-                var decoded = decodeBase64Bytes(s);
-                if (decoded && (decoded.length === 16 || decoded.length === 24 || decoded.length === 32)) {
-                    var h0 = bytesToHex(decoded);
-                    if (h0 && !seen[h0]) {
-                        seen[h0] = true;
-                        out.push(h0);
-                    }
-                }
-            } catch (_) {
-            }
-
-            try {
-                var asHex = sha256Hex(s);
-                if (!seen[asHex]) {
-                    seen[asHex] = true;
-                    out.push(asHex);
-                }
-            } catch (_) {
-            }
-        }
-
-        if (/^[\x21-\x7e]{16,64}$/.test(s)) {
-            try {
-                var utf8Bytes = new java.lang.String(s).getBytes(Java.type("java.nio.charset.StandardCharsets").UTF_8);
-                if (utf8Bytes && (utf8Bytes.length === 16 || utf8Bytes.length === 24 || utf8Bytes.length === 32)) {
-                    var h2 = bytesToHex(utf8Bytes);
-                    if (h2 && !seen[h2]) {
-                        seen[h2] = true;
-                        out.push(h2);
-                    }
-                }
-            } catch (_) {
-            }
-        }
-    }
-    return out;
-}
-
-function deriveKeyHexes(resolveObj, metaObj, maxKeys) {
-    var rVals = collectValueCandidates(resolveObj);
-    var mVals = collectValueCandidates(metaObj);
-    var out = [];
-    var seen = {};
-
-    var direct = collectDirectHexKeys(resolveObj, metaObj);
-    for (var d = 0; d < direct.length; d++) {
-        var dk = direct[d];
-        if (!seen[dk]) {
-            seen[dk] = true;
-            out.push(dk);
-            if (maxKeys && out.length >= maxKeys) return out;
-        }
-    }
-
-    for (var i = 0; i < rVals.length; i++) {
-        for (var j = 0; j < mVals.length; j++) {
-            for (var k = 0; k < mVals.length; k++) {
-                var candidates = [
-                    rVals[i] + ":" + mVals[j] + ":" + mVals[k],
-                    rVals[i] + ":" + mVals[j] + mVals[k],
-                    rVals[i] + mVals[j] + ":" + mVals[k],
-                    rVals[i] + mVals[j] + mVals[k],
-                    mVals[j] + ":" + rVals[i] + ":" + mVals[k],
-                    mVals[j] + mVals[k] + rVals[i],
-                    rVals[i] + ":" + mVals[j],
-                    rVals[i] + ":" + mVals[k],
-                    mVals[j] + ":" + mVals[k]
-                ];
-                for (var t = 0; t < candidates.length; t++) {
-                    var h = sha256Hex(candidates[t]);
-                    if (seen[h]) continue;
-                    seen[h] = true;
-                    out.push(h);
-                    if (maxKeys && out.length >= maxKeys) return out;
-                }
-            }
-        }
-    }
-    return out;
-}
-
-function extractCipherObject(text) {
-    if (!text) return null;
-
-    var rawText = String(text || "");
-
-    // Try direct JSON parse first.
     try {
-        var direct = JSON.parse(rawText);
-        if (direct && direct.l2) return direct;
-        var deepHit = findFirstKeyDeep(direct, "l2");
-        if (deepHit) {
-            var container = findCipherContainerDeep(direct);
-            if (container) return container;
-        }
-    } catch (_) {
-    }
+        var enc = safeJsonParse(contentStr);
+        if (!enc || !enc.l2) return "";
 
-    var s = htmlToText(rawText);
+        // Decode l2
+        var rawBytes = b64ToBytes(enc.l2);
+        if (!rawBytes || rawBytes.length < 28) return "";  // 12 IV + at least 16 bytes
 
-    // Try to parse compact object snippets that contain "l2".
-    var idx = s.indexOf('"l2"');
-    if (idx >= 0) {
-        var left = idx;
-        while (left >= 0 && s.charAt(left) !== "{") left--;
-        if (left >= 0) {
-            for (var right = idx; right < s.length; right++) {
-                if (s.charAt(right) !== "}") continue;
-                var chunk = s.substring(left, right + 1);
+        // Extract IV (first 12 bytes) và ciphertext
+        var iv1 = Java.type("byte[]")(12);
+        var ct1 = Java.type("byte[]")(rawBytes.length - 12);
+        java.lang.System.arraycopy(rawBytes, 0, iv1, 0, 12);
+        java.lang.System.arraycopy(rawBytes, 12, ct1, 0, rawBytes.length - 12);
+
+        // Giải mã stage 1
+        var stage1Text = aesGcmDecrypt(ct1, iv1, grantSecretHex);
+        if (!stage1Text) return "";
+
+        // Parse stage 1
+        var s1 = safeJsonParse(stage1Text);
+        if (s1) {
+            // Có stage 2: {"d":"<b64>","i":"<b64>","g":"<hex>"}
+            if (s1.d && s1.i && s1.g) {
                 try {
-                    var objChunk = JSON.parse(chunk);
-                    if (objChunk && objChunk.l2) return objChunk;
-                } catch (_) {
-                }
+                    // Stage 2: decrypt d, iv=b64(i), key=hex(g) or raw bytes
+                    var ct2 = b64ToBytes(s1.d);
+                    var iv2 = b64ToBytes(s1.i);
+
+                    // g có thể là hex string hoặc base64 key
+                    var keyHex2 = String(s1.g || "");
+                    if (!/^[0-9a-f]{32,64}$/i.test(keyHex2)) {
+                        // Thử giải mã base64 → hex
+                        try {
+                            var gBytes = b64ToBytes(keyHex2);
+                            var sb2 = new java.lang.StringBuilder();
+                            for (var gi = 0; gi < gBytes.length; gi++) {
+                                var gb = gBytes[gi]; if (gb < 0) gb += 256;
+                                var gh = java.lang.Integer.toHexString(gb);
+                                if (gh.length() === 1) sb2.append("0");
+                                sb2.append(gh);
+                            }
+                            keyHex2 = String(sb2.toString());
+                        } catch (_) {}
+                    }
+
+                    var stage2Text = aesGcmDecrypt(ct2, iv2, keyHex2);
+                    if (stage2Text) {
+                        return parseContentToHtml(stage2Text);
+                    }
+                } catch (_) {}
             }
+
+            // Stage 1 chính là nội dung cuối
+            return parseContentToHtml(stage1Text);
         }
-    }
 
-    // Fallback: first-to-last braces.
-    var start = s.indexOf("{");
-    var end = s.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-        try {
-            var obj = JSON.parse(s.substring(start, end + 1));
-            if (obj && obj.l2) return obj;
-            return findCipherContainerDeep(obj);
-        } catch (_) {
+        // stage1Text là plain text
+        if (stage1Text.length > 80) {
+            return plainTextToHtml(stage1Text);
         }
-    }
-
-    return null;
-}
-
-function findCipherContainerDeep(obj) {
-    if (!obj || typeof obj !== "object") return null;
-    if (obj.l2 && typeof obj.l2 === "string") return obj;
-
-    if (Array.isArray(obj)) {
-        for (var i = 0; i < obj.length; i++) {
-            var hitArr = findCipherContainerDeep(obj[i]);
-            if (hitArr) return hitArr;
-        }
-        return null;
-    }
-
-    for (var k in obj) {
-        if (!obj.hasOwnProperty(k)) continue;
-        var hit = findCipherContainerDeep(obj[k]);
-        if (hit) return hit;
-    }
-    return null;
-}
-
-function resolveToReadableHtml(resolveObj) {
-    if (!resolveObj) return "";
-
-    var directText = pickFirstValueDeep(resolveObj, ["content", "text", "body", "chapterContent"]);
-    if (directText) {
-        var cleanedDirect = cleanHtml(String(directText));
-        if (isReadableHtml(cleanedDirect) && !isCipherLikeContent(cleanedDirect)) return cleanedDirect;
-
-        var plain = htmlToText(cleanedDirect || directText).replace(/\s+/g, " ").trim();
-        if (plain.length > 120) return plainTextToHtml(plain);
-    }
-
-    var paragraphLike = findFirstKeyDeep(resolveObj, "paragraphs") || findFirstKeyDeep(resolveObj, "lines") || findFirstKeyDeep(resolveObj, "p");
-    if (paragraphLike && paragraphLike.length) {
-        return paragraphsToHtml(paragraphLike);
-    }
+    } catch (_) {}
 
     return "";
 }
 
-function normalizeParagraphs(payload) {
-    if (!payload) return [];
-    if (payload.paragraphs && payload.paragraphs.length) return payload.paragraphs;
-    if (payload.p && payload.p.length) return payload.p;
-    if (payload.lines && payload.lines.length) return payload.lines;
-    if (payload.content && typeof payload.content === "string") return [payload.content];
-    if (typeof payload === "string") return [payload];
-    return [];
-}
-
-function safeJsonParse(s) {
-    try {
-        return JSON.parse(s);
-    } catch (_) {
-        return null;
-    }
-}
-
-function findFirstKeyDeep(obj, keyName) {
-    if (!obj || typeof obj !== "object") return null;
-    if (obj.hasOwnProperty && obj.hasOwnProperty(keyName)) return obj[keyName];
-
-    if (Array.isArray(obj)) {
-        for (var i = 0; i < obj.length; i++) {
-            var hitArr = findFirstKeyDeep(obj[i], keyName);
-            if (hitArr !== null && hitArr !== undefined) return hitArr;
+function parseContentToHtml(text) {
+    if (!text) return "";
+    var obj = safeJsonParse(text);
+    if (obj) {
+        var paragraphs = obj.paragraphs || obj.p || obj.lines || null;
+        if (paragraphs && paragraphs.length) {
+            var html = [];
+            for (var i = 0; i < paragraphs.length; i++) {
+                var p = String(paragraphs[i] || "").replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "").trim();
+                if (p) html.push("<p>" + p + "</p>");
+            }
+            return html.join("\n");
         }
-        return null;
-    }
-
-    for (var k in obj) {
-        if (!obj.hasOwnProperty(k)) continue;
-        var v = obj[k];
-        if (v && typeof v === "object") {
-            var hit = findFirstKeyDeep(v, keyName);
-            if (hit !== null && hit !== undefined) return hit;
+        if (typeof obj.content === "string" && obj.content.length > 50) {
+            return plainTextToHtml(obj.content);
         }
     }
-    return null;
-}
-
-function findChapterIdDeep(obj) {
-    if (!obj || typeof obj !== "object") return "";
-
-    if (obj.chapter && obj.chapter.id) return String(obj.chapter.id);
-    if (obj.id && /^[a-f0-9]{16,}$/i.test(String(obj.id))) return String(obj.id);
-
-    if (Array.isArray(obj)) {
-        for (var i = 0; i < obj.length; i++) {
-            var idArr = findChapterIdDeep(obj[i]);
-            if (idArr) return idArr;
-        }
-        return "";
-    }
-
-    for (var k in obj) {
-        if (!obj.hasOwnProperty(k)) continue;
-        var v = obj[k];
-        if (v && typeof v === "object") {
-            var id = findChapterIdDeep(v);
-            if (id) return id;
-        }
-    }
+    // Plain text
+    var cleaned = String(text).replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "").trim();
+    if (cleaned.length > 80) return plainTextToHtml(cleaned);
     return "";
 }
 
-function extractScriptText(scriptNode) {
-    if (!scriptNode) return "";
-    var out = "";
-    try { out = scriptNode.data() || ""; } catch (_) {}
-    if (!out) {
-        try { out = scriptNode.html() || ""; } catch (_) {}
-    }
-    if (!out) {
-        try { out = scriptNode.text() || ""; } catch (_) {}
-    }
-    return String(out || "");
-}
+// ---- Gọi API ----
 
-function extractCipherMetaFromPage(doc, fallbackChapterId) {
-    if (!doc) return { cipherText: "", contentMetaV2: null, chapterId: fallbackChapterId || "" };
-
-    var scripts = doc.select("script");
-    var bestCipher = "";
-    var bestMeta = null;
-    var bestChapterId = "";
-
-    for (var i = 0; i < scripts.size(); i++) {
-        var scriptText = extractScriptText(scripts.get(i));
-        if (!scriptText) continue;
-        if (scriptText.length < 20) continue;
-
-        if (/contentMetaV2|grantId|"l2"\s*:/i.test(scriptText)) {
-            var parsed = safeJsonParse(scriptText);
-            if (parsed) {
-                var meta = findFirstKeyDeep(parsed, "contentMetaV2");
-                if (!bestMeta && meta && typeof meta === "object") bestMeta = meta;
-
-                var chapterObj = findFirstKeyDeep(parsed, "chapter");
-                if (chapterObj && chapterObj.content && isCipherLikeContent(chapterObj.content)) {
-                    bestCipher = String(chapterObj.content);
-                }
-
-                var idFromParsed = findChapterIdDeep(parsed);
-                if (!bestChapterId && idFromParsed) bestChapterId = idFromParsed;
-            }
-
-            if (!bestMeta) {
-                var metaMatch = scriptText.match(/"contentMetaV2"\s*:\s*(\{[\s\S]*?\})\s*(,|\})/i);
-                if (metaMatch) {
-                    var mObj = safeJsonParse(metaMatch[1]);
-                    if (mObj && typeof mObj === "object") bestMeta = mObj;
-                }
-            }
-        }
-
-        if (!bestCipher) {
-            var maybeCipher = extractCipherObject(scriptText);
-            if (maybeCipher && maybeCipher.l2) {
-                bestCipher = JSON.stringify(maybeCipher);
-            }
-        }
-    }
-
-    return {
-        cipherText: bestCipher || "",
-        contentMetaV2: bestMeta || null,
-        chapterId: bestChapterId || fallbackChapterId || ""
+function fetchChapterApi(chapterId, cookie) {
+    var ua = UserAgent.chrome();
+    var headers = {
+        "User-Agent": ua,
+        "Referer": BASE_URL + "/",
+        "Accept": "application/json"
     };
+    if (cookie) {
+        headers["Cookie"] = cookie;
+    }
+
+    var res = fetch(BASE_URL + "/api/chapters/" + chapterId, { headers: headers });
+    if (!res || !res.ok) return null;
+    return res.json();
 }
 
-function paragraphsToHtml(paragraphs) {
-    if (!paragraphs || !paragraphs.length) return "";
-    var html = [];
-    for (var i = 0; i < paragraphs.length; i++) {
-        var p = (paragraphs[i] || "").trim();
-        if (!p) continue;
-        html.push("<p>" + p + "</p>");
-    }
-    return html.join("\n");
-}
+function callResolveApi(chapterId, grantId, cookie) {
+    if (!grantId || !cookie) return "";
+    var ua = UserAgent.chrome();
+    var uaHash = sha256Hex(ua);
+    var deviceProof = sha256Hex(ua + "|vi-VN|UTC").substring(0, 32);
 
-function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCookie, forcedToken) {
-    LAST_DECRYPT_DEBUG = "";
-    if (!chapterId || !cipherText || !contentMeta) {
-        LAST_DECRYPT_DEBUG = "missing_input";
-        return "";
-    }
-
-    var hasJavaCrypto = canUseJavaCrypto();
-
-    var enc = extractCipherObject(cipherText);
-    if (!enc || !enc.l2) {
-        LAST_DECRYPT_DEBUG = "enc_missing";
-        return "";
-    }
-
-    var grantId = pickFirstValue(contentMeta, ["grantId", "grantID", "id", "g", "gid"]);
-    if (!grantId) {
-        grantId = pickFirstValueDeep(contentMeta, ["grantId", "grantID", "id", "g", "gid"]);
-    }
-    if (!grantId) {
-        LAST_DECRYPT_DEBUG = "grant_missing";
-        return "";
-    }
-
-    var ua = UserAgent.chrome() || "";
-    var deviceProof = "";
-    var uaHash = "";
-    if (hasJavaCrypto) {
-        deviceProof = "fallback-" + sha256Hex([ua, "vi-VN", "0", "0", "UTC"].join("|")).substring(0, 32);
-        uaHash = sha256Hex(ua);
-    }
-
-    var resolveHeaders = {
-        "user-agent": ua,
-        "content-type": "application/json",
-        "x-device-proof": deviceProof,
+    var headers = {
+        "User-Agent": ua,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Referer": BASE_URL + "/",
+        "Origin": BASE_URL,
         "x-client-ua-hash": uaHash,
-        "origin": "https://trangtruyen.site"
+        "x-device-proof": deviceProof,
+        "Cookie": cookie
     };
 
-    var authHeaders = buildApiAuthHeaders(forcedToken, forcedCookie);
-    for (var hk in authHeaders) {
-        if (!authHeaders.hasOwnProperty(hk)) continue;
-        resolveHeaders[hk] = authHeaders[hk];
-    }
-
-    var resolveObj = null;
-    var resolveMode = "";
-
-    function tryResolve(url, options, mode) {
-        try {
-            var r = fetch(url, options);
-            if (!r || !r.ok) return null;
-            var j = r.json();
-            if (!j) return null;
-            resolveMode = mode;
-            return j;
-        } catch (_) {
-            return null;
-        }
-    }
-
-    var resolveUrl = "https://trangtruyen.site/api/chapters/" + chapterId + "/resolve";
-    var resolveHeadersBuilt = buildTrangTruyenHeaders(resolveHeaders);
-
-    resolveObj = tryResolve(resolveUrl, {
-        method: "POST",
-        headers: resolveHeadersBuilt,
-        body: JSON.stringify({ grantId: grantId, deviceProof: deviceProof, uaHash: uaHash })
-    }, "post_full");
-
-    if (!resolveObj) {
-        resolveObj = tryResolve(resolveUrl, {
-            method: "POST",
-            headers: buildTrangTruyenHeaders({
-                "content-type": "application/json",
-                "origin": "https://trangtruyen.site"
-            }),
-            body: JSON.stringify({ grantId: grantId })
-        }, "post_grant_only");
-    }
-
-    if (!resolveObj) {
-        resolveObj = tryResolve(resolveUrl + "?grantId=" + encodeURIComponent(String(grantId)), {
-            method: "GET",
-            headers: buildTrangTruyenHeaders(buildApiAuthHeaders(forcedToken, forcedCookie))
-        }, "get_query");
-    }
-
-    if (!resolveObj) {
-        LAST_DECRYPT_DEBUG = "resolve_fail";
-        return "";
-    }
-
-    LAST_DECRYPT_DEBUG = "resolve_ok:" + resolveMode;
-
-    var resolveReadable = resolveToReadableHtml(resolveObj);
-    if (resolveReadable && resolveReadable.length > 30) return resolveReadable;
-
-    if (!hasJavaCrypto) {
-        LAST_DECRYPT_DEBUG = "no_java_crypto";
-        return "";
-    }
-
-    var b64 = [];
-    for (var k in enc) {
-        if (!enc.hasOwnProperty(k) || k === "l2" || k === "v") continue;
-        var v = String(enc[k] || "");
-        if (/^[A-Za-z0-9+/=]{16,}$/.test(v)) b64.push(v);
-    }
-    if (b64.length < 2) {
-        LAST_DECRYPT_DEBUG = "b64_parts_lt2";
-        return "";
-    }
-
-    var keys = deriveKeyHexes(resolveObj, contentMeta, 120);
-    if (!keys.length) {
-        LAST_DECRYPT_DEBUG = "keys_empty";
-        return "";
-    }
-
-    var stage1 = null;
-    for (var i = 0; i < keys.length && !stage1; i++) {
-        for (var a = 0; a < b64.length && !stage1; a++) {
-            for (var b = 0; b < b64.length && !stage1; b++) {
-                if (a === b) continue;
-                try {
-                    var t1 = aesGcmDecryptBase64Parts(enc.l2, b64[a], b64[b], keys[i]);
-                    var o1 = JSON.parse(t1);
-                    if (o1 && o1.d && o1.i && o1.g) stage1 = o1;
-                } catch (_) {
-                }
-            }
-        }
-    }
-    if (!stage1) {
-        LAST_DECRYPT_DEBUG = "stage1_fail";
-        return "";
-    }
-
-    for (var j = 0; j < keys.length; j++) {
-        try {
-            var t2 = aesGcmDecryptBase64Parts(stage1.d, stage1.i, stage1.g, keys[j]);
-            var o2 = JSON.parse(t2);
-            var ps = normalizeParagraphs(o2);
-            if (ps && ps.length) {
-                LAST_DECRYPT_DEBUG = "ok_stage2";
-                return paragraphsToHtml(ps);
-            }
-        } catch (_) {
-        }
-    }
-
-    LAST_DECRYPT_DEBUG = "stage2_fail";
-
-    return "";
-}
-
-function tryApiContent(url, forcedCookie, forcedToken) {
-    var chapterId = extractChapterId(url);
-    if (!chapterId) return { content: "", rawContent: "", requireLogin: false, chapterId: "", contentMetaV2: null };
-
-    var response = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
-        headers: buildTrangTruyenHeaders()
+    var body = JSON.stringify({
+        grantId: grantId,
+        deviceProof: deviceProof,
+        uaHash: uaHash
     });
-    if (!response.ok) {
-        if (forcedCookie || forcedToken) {
-            response = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
-                headers: buildTrangTruyenHeaders(buildApiAuthHeaders(forcedToken, forcedCookie))
-            });
-        }
-    }
-    if (!response.ok) return { content: "", rawContent: "", requireLogin: false, chapterId: chapterId, contentMetaV2: null };
 
-    var json = response.json();
-    if ((!json || !json.chapter) && (forcedCookie || forcedToken)) {
-        var response2 = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
-            headers: buildTrangTruyenHeaders(buildApiAuthHeaders(forcedToken, forcedCookie))
-        });
-        if (response2.ok) json = response2.json();
-    }
-    if (!json || !json.chapter) return { content: "", rawContent: "", requireLogin: false, chapterId: chapterId, contentMetaV2: null };
-
-    if (json.requireLogin && (forcedCookie || forcedToken)) {
-        var retryAuthRes = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
-            headers: buildTrangTruyenHeaders(buildApiAuthHeaders(forcedToken, forcedCookie))
-        });
-        if (retryAuthRes.ok) {
-            var authJson = retryAuthRes.json();
-            if (authJson && authJson.chapter) json = authJson;
-        }
-    }
-
-    var rawContent = String((json.chapter && json.chapter.content) || "");
-    var content = cleanHtml(rawContent || "");
-    if (content && content.indexOf("<") < 0) {
-        content = plainTextToHtml(content);
-    }
-
-    return {
-        content: content,
-        rawContent: rawContent,
-        requireLogin: !!json.requireLogin,
-        chapterId: String((json.chapter && json.chapter.id) || chapterId || ""),
-        contentMetaV2: json.contentMetaV2 || null
-    };
-}
-
-function extractHtmlContent(doc) {
-    var selectors = [
-        ".chapter-content",
-        ".reader-content",
-        ".chapter-body",
-        "article .chapter-content",
-        "main .chapter-content",
-        ".content .chapter-content"
-    ];
-
-    for (var i = 0; i < selectors.length; i++) {
-        var node = doc.select(selectors[i]).first();
-        if (!node) continue;
-        var html = cleanHtml(node.html() || "");
-        if (isReadableHtml(html)) return html;
-
-        // Some chapters are rendered as plain text blocks without paragraph tags.
-        var blockText = (node.text() || "").replace(/\s+/g, " ").trim();
-        if (blockText.length > 180 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(blockText)) {
-            return plainTextToHtml(blockText);
-        }
-    }
-    return "";
-}
-
-function extractChapterFromRawHtml(rawHtml) {
-    if (!rawHtml) return "";
-    var html = String(rawHtml || "");
-
-    var patterns = [
-        /<div[^>]*class=["'][^"']*chapter-content[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
-        /<div[^>]*class=["'][^"']*reader-content[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
-        /<div[^>]*class=["'][^"']*chapter-body[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
-        /<article[^>]*>([\s\S]*?)<\/article>/i,
-        /<main[^>]*>([\s\S]*?)<\/main>/i
-    ];
-
-    for (var i = 0; i < patterns.length; i++) {
-        var m = html.match(patterns[i]);
-        if (!m || !m[1]) continue;
-        var cleaned = cleanHtml(m[1]);
-        if (isReadableHtml(cleaned) && !isCipherLikeContent(cleaned)) {
-            return cleaned;
-        }
-
-        var cleanedText = htmlToText(cleaned || "");
-        if (cleanedText.length > 200 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(cleanedText)) {
-            return plainTextToHtml(cleanedText);
-        }
-    }
-
-    var allText = htmlToText(html || "");
-    if (allText.length > 300 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(allText)) {
-        return plainTextToHtml(allText);
-    }
-
-    return "";
-}
-
-function getUrlSpecificDomSelectors(url) {
-    var u = String(url || "");
-    var selectors = [
-        ".chapter-content",
-        ".reader-content",
-        ".chapter-body",
-        "#chapter-content",
-        "#reader-content",
-        "#chapter-body",
-        "[data-chapter-content]",
-        "[data-reader-content]",
-        "article .chapter-content",
-        "main .chapter-content"
-    ];
-
-    if (/\/read\//i.test(u)) {
-        selectors = selectors.concat([
-            ".novel-content",
-            ".reading-content",
-            ".chapter-detail__content",
-            ".content-chapter",
-            ".entry-content",
-            ".prose",
-            "main article",
-            "article"
-        ]);
-    }
-
-    if (/trangtruyen\.site/i.test(u)) {
-        selectors = selectors.concat([
-            "div[class*='chapter'][class*='content']",
-            "div[class*='reader'][class*='content']",
-            "div[class*='reading'][class*='content']",
-            "div[id*='chapter'][id*='content']"
-        ]);
-    }
-
-    return selectors;
-}
-
-function getBrowserSelectorResult(browser, selector, mode) {
-    if (!browser || !selector) return "";
-    var fnNames = ["evaluate", "executeScript", "runScript", "eval"];
-    var script = "(function(){var n=document.querySelector(" + JSON.stringify(String(selector)) + ");if(!n)return '';return " +
-        (mode === "text"
-            ? "(n.innerText||n.textContent||'');"
-            : "(n.innerHTML||'');") +
-        "})()";
-
-    for (var i = 0; i < fnNames.length; i++) {
-        var fn = fnNames[i];
-        try {
-            if (typeof browser[fn] !== "function") continue;
-            var out = browser[fn](script);
-            if (out !== undefined && out !== null) {
-                var s = String(out || "");
-                if (s) return s;
-            }
-        } catch (_) {
-        }
-    }
-
-    return "";
-}
-
-function extractFromBrowserDomBySelectors(browser, url) {
-    var selectors = getUrlSpecificDomSelectors(url);
-
-    for (var i = 0; i < selectors.length; i++) {
-        var selector = selectors[i];
-
-        var html = getBrowserSelectorResult(browser, selector, "html");
-        if (html) {
-            var cleaned = cleanHtml(html);
-            if (isReadableHtml(cleaned) && !isCipherLikeContent(cleaned)) {
-                return cleaned;
-            }
-
-            var txtFromHtml = htmlToText(cleaned || "");
-            if (txtFromHtml.length > 200 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(txtFromHtml)) {
-                return plainTextToHtml(txtFromHtml);
-            }
-        }
-
-        var text = getBrowserSelectorResult(browser, selector, "text");
-        if (text) {
-            var normalized = String(text || "").replace(/\s+/g, " ").trim();
-            if (normalized.length > 220 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(normalized)) {
-                return plainTextToHtml(normalized);
-            }
-        }
-    }
-
-    return "";
-}
-
-function extractFromBrowserDomHeuristic(browser) {
-    if (!browser) return "";
-
-    var fnNames = ["evaluate", "executeScript", "runScript", "eval"];
-    var script = "(function(){" +
-        "function badText(s){if(!s)return true;return /Yeu\\s*cau\\s*dang\\s*nhap|Yêu\\s*cầu\\s*đăng\\s*nhập|Ban\\s*can\\s*dang\\s*nhap|Bạn\\s*cần\\s*đăng\\s*nhập|Dang\\s*nhap|Đăng\\s*nhập|Login|Mã\\s*chương\\s*không\\s*hợp\\s*lệ/i.test(s);}" +
-        "function scoreNode(n){if(!n)return 0;var t=(n.innerText||n.textContent||'').replace(/\\s+/g,' ').trim();if(t.length<120)return 0;if(badText(t))return 0;var pCount=(n.querySelectorAll?n.querySelectorAll('p').length:0);var brCount=((n.innerHTML||'').match(/<br\\s*\\/?\\s*>/gi)||[]).length;return t.length + pCount*180 + brCount*40;}" +
-        "var root=document.body||document.documentElement;if(!root)return '';" +
-        "var candidates=[];" +
-        "var sel='article,main,section,div,[class*=chapter],[class*=reader],[class*=reading],[class*=content],[id*=chapter],[id*=content]';" +
-        "var nodes=[];try{nodes=Array.prototype.slice.call(root.querySelectorAll(sel));}catch(e){nodes=[];}" +
-        "if(nodes.length===0)nodes=[root];" +
-        "for(var i=0;i<nodes.length;i++){var n=nodes[i];if(!n)continue;var tag=(n.tagName||'').toLowerCase();if(/script|style|noscript|svg|canvas|header|footer|nav|aside/.test(tag))continue;var sc=scoreNode(n);if(sc>0)candidates.push({n:n,s:sc});}" +
-        "candidates.sort(function(a,b){return b.s-a.s;});" +
-        "for(var j=0;j<candidates.length;j++){var node=candidates[j].n;var html=(node.innerHTML||'').trim();var text=(node.innerText||node.textContent||'').replace(/\\s+/g,' ').trim();if(text.length<160)continue;if(badText(text))continue;return html||text;}" +
-        "var bodyText=(root.innerText||root.textContent||'').replace(/\\s+/g,' ').trim();if(bodyText.length>260 && !badText(bodyText)) return bodyText;" +
-        "return '';" +
-    "})()";
-
-    for (var i = 0; i < fnNames.length; i++) {
-        var fn = fnNames[i];
-        try {
-            if (typeof browser[fn] !== "function") continue;
-            var out = browser[fn](script);
-            if (out === undefined || out === null) continue;
-            var raw = String(out || "").trim();
-            if (!raw) continue;
-
-            var cleaned = cleanHtml(raw);
-            if (isReadableHtml(cleaned) && !isCipherLikeContent(cleaned)) {
-                return cleaned;
-            }
-
-            var text = htmlToText(cleaned || raw).replace(/\s+/g, " ").trim();
-            if (text.length > 220 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(text)) {
-                return plainTextToHtml(text);
-            }
-        } catch (_) {
-        }
-    }
-
-    return "";
-}
-
-function extractFromBrowserLaunchDocument(doc, url) {
-    if (!doc) return "";
-
-    var selectors = getUrlSpecificDomSelectors(url);
-    for (var i = 0; i < selectors.length; i++) {
-        var nodes = null;
-        try {
-            nodes = doc.select(selectors[i]);
-        } catch (_) {
-            nodes = null;
-        }
-        if (!nodes || !nodes.size || nodes.size() === 0) continue;
-
-        for (var j = 0; j < nodes.size(); j++) {
-            var node = nodes.get(j);
-            if (!node) continue;
-
-            var rawHtml = "";
-            var rawText = "";
-            try { rawHtml = String(node.html() || ""); } catch (_) {}
-            try { rawText = String(node.text() || ""); } catch (_) {}
-
-            if (rawHtml) {
-                var cleaned = cleanHtml(rawHtml);
-                if (isReadableHtml(cleaned) && !isCipherLikeContent(cleaned)) {
-                    return cleaned;
-                }
-
-                var textFromHtml = htmlToText(cleaned || "").replace(/\s+/g, " ").trim();
-                if (textFromHtml.length > 180 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(textFromHtml)) {
-                    return plainTextToHtml(textFromHtml);
-                }
-            }
-
-            if (rawText) {
-                var normalized = rawText.replace(/\s+/g, " ").trim();
-                if (normalized.length > 180 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(normalized)) {
-                    return plainTextToHtml(normalized);
-                }
-            }
-        }
-    }
-
+    // Thử POST
     try {
-        var pageHtml = String(doc.html() || "");
-        var fromRaw = extractChapterFromRawHtml(pageHtml);
-        if (fromRaw) return fromRaw;
-    } catch (_) {
-    }
-
-    try {
-        var pageText = String(doc.text() || "").replace(/\s+/g, " ").trim();
-        if (pageText.length > 260 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(pageText)) {
-            return plainTextToHtml(pageText);
+        var res = fetch(BASE_URL + "/api/chapters/" + chapterId + "/resolve", {
+            method: "POST",
+            headers: headers,
+            body: body
+        });
+        if (res && res.ok) {
+            var j = res.json();
+            if (j && j.grantSecret) return String(j.grantSecret);
         }
-    } catch (_) {
-    }
+    } catch (_) {}
+
+    // Thử không gửi deviceProof/uaHash (đơn giản hơn)
+    try {
+        var headers2 = {
+            "User-Agent": ua,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Referer": BASE_URL + "/",
+            "Cookie": cookie
+        };
+        var res2 = fetch(BASE_URL + "/api/chapters/" + chapterId + "/resolve", {
+            method: "POST",
+            headers: headers2,
+            body: JSON.stringify({ grantId: grantId })
+        });
+        if (res2 && res2.ok) {
+            var j2 = res2.json();
+            if (j2 && j2.grantSecret) return String(j2.grantSecret);
+        }
+    } catch (_) {}
 
     return "";
 }
 
-function tryBrowserRenderedContent(url) {
+// ---- Browser render với chờ đủ lâu ----
+// Trang dùng Web Worker giải mã nội dung (async), phải đợi sau khi JS chạy xong
+
+function tryBrowserRender(url, cookie) {
     var browser = null;
-    var htmlCandidates = [];
-    var textCandidates = [];
-
-    var runtime = bootstrapAuthFromBrowser(url);
-    if (runtime && runtime.html) {
-        var fromRuntimeHtml = extractChapterFromRawHtml(runtime.html);
-        if (fromRuntimeHtml) return fromRuntimeHtml;
-    }
-    if (runtime && runtime.text) {
-        var runtimeText = String(runtime.text || "").replace(/\s+/g, " ").trim();
-        if (runtimeText.length > 240 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(runtimeText)) {
-            return plainTextToHtml(runtimeText);
-        }
-    }
-
     try {
         browser = Engine.newBrowser();
-        var launchDoc = browser.launch(url, 12000);
 
-        if (launchDoc) {
-            var fromLaunchDoc = extractFromBrowserLaunchDocument(launchDoc, url);
-            if (fromLaunchDoc) {
-                try { browser.close(); } catch (_) {}
-                return fromLaunchDoc;
+        // Mở trang, chờ 15 giây để JS và Web Worker giải mã chạy xong
+        browser.launch(url, 15000);
+
+        // Script tìm nội dung chương trong DOM
+        var contentScript = "(function(){" +
+            "var sels=['.chapter-content','#chapter-content','.reader-content','.chapter-body'];" +
+            "for(var i=0;i<sels.length;i++){" +
+            "  var n=document.querySelector(sels[i]);if(!n)continue;" +
+            "  var t=(n.innerText||n.textContent||'').replace(/[\\u200B-\\u200F\\u202A-\\u202E\\u2060\\uFEFF]/g,'').replace(/\\s+/g,' ').trim();" +
+            "  if(t.length>150&&!/\u0111\u0103ng nh\u1eadp|login|y\u00eau c\u1ea7u \u0111\u0103ng/i.test(t)){return n.innerHTML||t;}" +
+            "}" +
+            "return '';" +
+            "})()";
+
+        var result = "";
+
+        // Thử callJs (đợi thêm 5 giây cho Web Worker)
+        try {
+            var docAfter = browser.callJs(contentScript, 5000);
+            if (docAfter) {
+                try {
+                    var txt = String(docAfter.text ? docAfter.text() : "").replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "").replace(/\s+/g, " ").trim();
+                    if (txt.length > 150 && !isLoginRequired(txt)) result = txt;
+                } catch (_) {}
+            }
+        } catch (_) {}
+
+        // Nếu callJs không có kết quả, thử lấy HTML sau đó
+        if (!result) {
+            try {
+                var finalDoc = browser.html();
+                if (finalDoc) {
+                    var sels = [".chapter-content", "#chapter-content", ".reader-content", ".chapter-body"];
+                    for (var i = 0; i < sels.length && !result; i++) {
+                        try {
+                            var node = finalDoc.select(sels[i]).first();
+                            if (!node) continue;
+                            var nodeText = String(node.text ? node.text() : "").replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "").replace(/\s+/g, " ").trim();
+                            if (nodeText.length > 150 && !isLoginRequired(nodeText)) {
+                                result = String(node.html ? node.html() : nodeText);
+                            }
+                        } catch (_) {}
+                    }
+                }
+            } catch (_) {}
+        }
+
+        try { browser.close(); } catch (_) {}
+
+        if (result) {
+            var cleaned = cleanContent(result);
+            var text = htmlToText(cleaned);
+            if (isGoodContent(text)) {
+                if (/<p[\s>]|<br/.test(cleaned)) return cleaned;
+                return plainTextToHtml(text);
             }
         }
-
-        var domSelected = extractFromBrowserDomBySelectors(browser, url);
-        if (domSelected) {
-            try { browser.close(); } catch (_) {}
-            return domSelected;
-        }
-
-        var heuristicDom = extractFromBrowserDomHeuristic(browser);
-        if (heuristicDom) {
-            try { browser.close(); } catch (_) {}
-            return heuristicDom;
-        }
-
-        try { htmlCandidates.push(String(browser.html() || "")); } catch (_) {}
-        try { htmlCandidates.push(String(browser.getHtml() || "")); } catch (_) {}
-        try { htmlCandidates.push(String(browser.pageSource() || "")); } catch (_) {}
-        try { htmlCandidates.push(String(browser.source() || "")); } catch (_) {}
-
-        try { textCandidates.push(String(browser.text() || "")); } catch (_) {}
-        try { textCandidates.push(String(browser.getText() || "")); } catch (_) {}
-        try { textCandidates.push(String(browser.bodyText() || "")); } catch (_) {}
     } catch (_) {
+        try { if (browser) browser.close(); } catch (__) {}
     }
-
-    try {
-        if (browser) browser.close();
-    } catch (_) {
-    }
-
-    for (var i = 0; i < htmlCandidates.length; i++) {
-        var html = extractChapterFromRawHtml(htmlCandidates[i]);
-        if (html) return html;
-    }
-
-    for (var j = 0; j < textCandidates.length; j++) {
-        var text = String(textCandidates[j] || "").replace(/\s+/g, " ").trim();
-        if (text.length > 300 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(text)) {
-            return plainTextToHtml(text);
-        }
-    }
-
     return "";
 }
 
-function loginRequiredError(url) {
-    markAuthRetryNeeded();
-    return Response.error(ERROR_MESSAGE + "\n" + (url || BASE_SOURCE));
-}
-
-function loginRequiredErrorWithDebug(url, debugItems) {
-    markAuthRetryNeeded();
-    var tail = "";
-    if (debugItems && debugItems.length) {
-        tail = "\n[TTDBG] " + debugItems.join(" | ");
-    }
-    return Response.error(ERROR_MESSAGE + "\n" + (url || BASE_SOURCE) + tail);
-}
+// ---- Main execute ----
 
 function execute(url) {
+    var dbg = [];
+    function log(s) { try { dbg.push(String(s)); } catch (_) {} }
+
     try {
-        var debug = [];
-        function dbg(s) {
-            try { debug.push(String(s)); } catch (_) {}
+        var chapterId = extractChapterId(url);
+        if (!chapterId) return Response.error("Không lấy được chapter ID.");
+
+        log("chapId=" + chapterId.substring(0, 12));
+
+        // Bước 1: Lấy cookie
+        var cookie = getSiteCookie(url);
+        log("cookie=" + (cookie ? "1" : "0"));
+        log("cookieLen=" + (cookie || "").length);
+        log("hasSid=" + (cookie && cookie.indexOf("trangtruyen") >= 0 ? "1" : "0"));
+
+        // Bước 2: Gọi API chapter
+        var apiJson = fetchChapterApi(chapterId, cookie);
+        log("apiOk=" + (apiJson ? "1" : "0"));
+
+        if (apiJson && apiJson.chapter) {
+            var chapter = apiJson.chapter;
+            var contentStr = String(chapter.content || "");
+            log("contentLen=" + contentStr.length);
+            log("contentIsJson=" + (safeJsonParse(contentStr) ? "1" : "0"));
+
+            // Lấy contentMetaV2 (có thể ở cấp top-level hoặc trong chapter)
+            var meta = apiJson.contentMetaV2 || chapter.contentMetaV2 || null;
+            var grantId = "";
+            if (meta) {
+                grantId = meta.grantId || meta.grantID || meta.id || meta.g || "";
+            }
+            log("grantId=" + (grantId ? grantId.substring(0, 12) : "none"));
+
+            // Kiểm tra nội dung không bị mã hóa (chương miễn phí)
+            var parsedContent = safeJsonParse(contentStr);
+            if (contentStr && !parsedContent) {
+                // contentStr là HTML hoặc text thuần
+                var cleaned0 = cleanContent(contentStr);
+                var text0 = htmlToText(cleaned0);
+                if (isGoodContent(text0)) {
+                    if (/<p[\s>]|<br/.test(cleaned0)) return Response.success(cleaned0);
+                    return Response.success(plainTextToHtml(text0));
+                }
+            }
+
+            // Kiểm tra xem có phải cipher v3 không
+            var isCipherV3 = parsedContent && parsedContent.v === 3 && parsedContent.l2;
+            log("cipherV3=" + (isCipherV3 ? "1" : "0"));
+            log("javaCrypto=" + (canUseJavaCrypto() ? "1" : "0"));
+
+            // Bước 3: Gọi /resolve để lấy grantSecret
+            if (grantId) {
+                var grantSecret = callResolveApi(chapterId, grantId, cookie);
+                log("grantSecret=" + (grantSecret ? "1" : "0") + "_len=" + (grantSecret || "").length);
+
+                if (grantSecret && canUseJavaCrypto()) {
+                    // Bước 4: Giải mã AES-GCM
+                    var decrypted = decryptChapterContent(contentStr, grantSecret);
+                    log("decryptLen=" + (decrypted || "").length);
+                    if (decrypted && decrypted.length > 50) {
+                        return Response.success(cleanContent(decrypted));
+                    }
+                }
+
+                if (grantSecret && !canUseJavaCrypto()) {
+                    // Có key nhưng không thể giải mã bằng Java → Dùng browser render
+                    // (Browser sẽ dùng JS native để giải mã)
+                    log("noJavaCrypto_tryBrowser=1");
+                    var browserWithKey = tryBrowserRender(url, cookie);
+                    log("browserWithKeyLen=" + (browserWithKey || "").length);
+                    if (browserWithKey && browserWithKey.length > 50) {
+                        return Response.success(browserWithKey);
+                    }
+                }
+
+                if (!grantSecret) {
+                    // Không lấy được key → chưa đăng nhập hoặc session hết hạn
+                    // Thử browser render (nội dung sẽ được giải mã bởi JS trang web)
+                    log("noGrantSecret_tryBrowser=1");
+                    var browserHtml = tryBrowserRender(url, cookie);
+                    log("browserHtmlLen=" + (browserHtml || "").length);
+                    if (browserHtml && browserHtml.length > 50) {
+                        return Response.success(browserHtml);
+                    }
+                    return Response.error(ERROR_LOGIN + "\n[DBG: " + dbg.join("|") + "]");
+                }
+            }
+
+            // Không có grantId → thử browser render
+            log("noGrantId_tryBrowser=1");
         }
 
-        var retryMode = isAuthRetryNeeded();
-        dbg("retry=" + (retryMode ? "1" : "0"));
-        var runtimeCookie = getSessionCookie(url);
-        var runtimeToken = "";
+        // Bước 5: Fallback browser render
+        log("fallback_browser=1");
+        var browserFallback = tryBrowserRender(url, cookie);
+        log("browserFallbackLen=" + (browserFallback || "").length);
+        if (browserFallback && browserFallback.length > 50) {
+            return Response.success(browserFallback);
+        }
+
+        // Bước 6: Fetch HTML trực tiếp
         try {
-            runtimeToken = extractTokenFromCookie(runtimeCookie) ||
-                localStorage.getItem("trangtruyen_token") ||
-                localStorage.getItem("accessToken") ||
-                localStorage.getItem("token") ||
-                "";
-        } catch (_) {
-            runtimeToken = extractTokenFromCookie(runtimeCookie) || "";
-        }
-        dbg("cookie=" + (runtimeCookie ? "1" : "0"));
-        dbg("token=" + (runtimeToken ? "1" : "0"));
-        dbg("java_crypto=" + (canUseJavaCrypto() ? "1" : "0"));
+            var pageHeaders = {
+                "User-Agent": UserAgent.chrome(),
+                "Referer": BASE_URL + "/"
+            };
+            if (cookie) pageHeaders["Cookie"] = cookie;
 
-        if (retryMode) {
-            var refreshed = forceRefreshSession(url);
-            if (refreshed.cookie) runtimeCookie = refreshed.cookie;
-            if (refreshed.token) runtimeToken = refreshed.token;
-            dbg("refresh=" + ((refreshed.cookie || refreshed.token) ? "1" : "0"));
-        }
-
-        if (!runtimeToken || !runtimeCookie) {
-            var browserBoot = bootstrapAuthFromBrowser(url);
-            if (browserBoot.cookie) runtimeCookie = browserBoot.cookie;
-            if (browserBoot.token) runtimeToken = browserBoot.token;
-            dbg("boot_cookie=" + (browserBoot.cookie ? "1" : "0"));
-            dbg("boot_token=" + (browserBoot.token ? "1" : "0"));
-            dbg("boot_html_len=" + String((browserBoot.html || "").length));
-            dbg("boot_text_len=" + String((browserBoot.text || "").length));
-
-            try {
-                if (runtimeToken) localStorage.setItem("trangtruyen_token", runtimeToken);
-            } catch (_) {
-            }
-
-            if (browserBoot.html) {
-                var bootHtml = extractChapterFromRawHtml(browserBoot.html);
-                if (bootHtml && isReadableHtml(bootHtml) && !isCipherLikeContent(bootHtml)) {
-                    clearAuthRetryNeeded();
-                    return Response.success(bootHtml);
+            var pageRes = fetch(url, { headers: pageHeaders });
+            log("htmlPageOk=" + (pageRes && pageRes.ok ? "1" : "0"));
+            if (pageRes && pageRes.ok) {
+                var doc = pageRes.html("utf-8");
+                var selList = [".chapter-content", "#chapter-content", ".reader-content", ".chapter-body", "article.chapter", "article", "main"];
+                for (var si = 0; si < selList.length; si++) {
+                    var node = doc.select(selList[si]).first();
+                    if (!node) continue;
+                    var nodeHtml = cleanContent(node.html() || "");
+                    var nodeText = htmlToText(nodeHtml);
+                    log("htmlSel=" + selList[si] + "_len=" + nodeText.length);
+                    if (isGoodContent(nodeText)) {
+                        return Response.success(nodeHtml);
+                    }
                 }
             }
+        } catch (_) {}
 
-            if (browserBoot.text) {
-                var bootText = String(browserBoot.text || "").replace(/\s+/g, " ").trim();
-                if (bootText.length > 240 && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(bootText)) {
-                    clearAuthRetryNeeded();
-                    return Response.success(plainTextToHtml(bootText));
-                }
-            }
-        }
-
-        var pageResponse = fetch(url, {
-            headers: buildTrangTruyenHeaders()
-        });
-        dbg("page_ok=" + (pageResponse && pageResponse.ok ? "1" : "0"));
-
-        var apiRes = tryApiContent(url, runtimeCookie, runtimeToken);
-        var apiHtml = apiRes && apiRes.content ? apiRes.content : "";
-        var apiRaw = apiRes && apiRes.rawContent ? String(apiRes.rawContent) : "";
-        var chapterId = (apiRes && apiRes.chapterId) ? apiRes.chapterId : extractChapterId(url);
-        var apiMeta = apiRes ? apiRes.contentMetaV2 : null;
-        dbg("api_login=" + ((apiRes && apiRes.requireLogin) ? "1" : "0"));
-        dbg("api_html_len=" + String((apiHtml || "").length));
-        dbg("api_meta=" + (apiMeta ? "1" : "0"));
-
-        var apiCipherInput = (apiRaw && isCipherLikeContent(apiRaw)) ? apiRaw : apiHtml;
-        dbg("api_raw_len=" + String((apiRaw || "").length));
-        dbg("api_raw_cipher=" + (isCipherLikeContent(apiRaw) ? "1" : "0"));
-
-        if (apiCipherInput && isCipherLikeContent(apiCipherInput) && apiMeta) {
-            try {
-                var decrypted = tryDecryptCipherContent(chapterId, apiCipherInput, apiMeta, runtimeCookie, runtimeToken);
-                dbg("api_decrypt_len=" + String((decrypted || "").length));
-                dbg("api_decrypt_dbg=" + String(LAST_DECRYPT_DEBUG || ""));
-                if (decrypted && decrypted.length > 30) {
-                    clearAuthRetryNeeded();
-                    return Response.success(decrypted);
-                }
-            } catch (_) {
-                dbg("api_decrypt_exception=1");
-                dbg("api_decrypt_dbg=" + String(LAST_DECRYPT_DEBUG || ""));
-            }
-
-            var scannedFromApi = scanReadableText(apiRaw || apiHtml || "");
-            dbg("api_scan_len=" + String((scannedFromApi || "").length));
-            if (scannedFromApi && scannedFromApi.length > 30) {
-                clearAuthRetryNeeded();
-                return Response.success(scannedFromApi);
-            }
-        }
-
-        if (apiHtml && isReadableHtml(apiHtml) && !isCipherLikeContent(apiHtml)) {
-            clearAuthRetryNeeded();
-            return Response.success(apiHtml);
-        }
-
-        if ((apiRes && apiRes.requireLogin) && (runtimeToken || hasAnyAuthCredential())) {
-            var domBySession = tryBrowserRenderedContent(url);
-            dbg("dom_by_session_len=" + String((domBySession || "").length));
-            if (domBySession && domBySession.length > 30) {
-                clearAuthRetryNeeded();
-                return Response.success(domBySession);
-            }
-        }
-
-        // Always try browser-rendered extraction once before returning login-required.
-        var domAny = tryBrowserRenderedContent(url);
-        dbg("dom_any_len=" + String((domAny || "").length));
-        if (domAny && domAny.length > 30) {
-            clearAuthRetryNeeded();
-            return Response.success(domAny);
-        }
-
-        if (!pageResponse.ok) {
-            if (apiRes && apiRes.requireLogin) {
-                return loginRequiredErrorWithDebug(url, debug);
-            }
-            return loginRequiredErrorWithDebug(url, debug);
-        }
-
-        var doc = pageResponse.html("utf-8");
-
-        var scriptExtract = extractCipherMetaFromPage(doc, chapterId);
-        if (scriptExtract && scriptExtract.cipherText && scriptExtract.contentMetaV2) {
-            try {
-                var decFromPage = tryDecryptCipherContent(
-                    scriptExtract.chapterId || chapterId,
-                    scriptExtract.cipherText,
-                    scriptExtract.contentMetaV2,
-                    runtimeCookie,
-                    runtimeToken
-                );
-                if (decFromPage && decFromPage.length > 30) {
-                    clearAuthRetryNeeded();
-                    return Response.success(decFromPage);
-                }
-            } catch (_) {
-            }
-        }
-
-        var html = extractHtmlContent(doc);
-
-        var scannedFromPage = scanReadableText((doc && doc.html ? doc.html() : "") || "");
-        dbg("page_scan_len=" + String((scannedFromPage || "").length));
-        if (scannedFromPage && scannedFromPage.length > 30) {
-            clearAuthRetryNeeded();
-            return Response.success(scannedFromPage);
-        }
-
-        if (isReadableHtml(html) && !isCipherLikeContent(html)) {
-            clearAuthRetryNeeded();
-            return Response.success(html);
-        }
-
-        var textOnly = (doc.text() || "").replace(/\s+/g, " ").trim();
-        if (textOnly && textOnly.length > 60 && !isCipherLikeContent(textOnly) && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(textOnly)) {
-            clearAuthRetryNeeded();
-            return Response.success(plainTextToHtml(textOnly));
-        }
-
-        var text = doc.text() || "";
-        if (/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(text) || (apiRes && apiRes.requireLogin)) {
-            if (retryMode) {
-                var browserHtml = tryBrowserRenderedContent(url);
-                dbg("dom_retry_login_len=" + String((browserHtml || "").length));
-                if (browserHtml && browserHtml.length > 30) {
-                    clearAuthRetryNeeded();
-                    return Response.success(browserHtml);
-                }
-            }
-            return loginRequiredErrorWithDebug(url, debug);
-        }
-
-        if ((apiCipherInput && isCipherLikeContent(apiCipherInput)) || isCipherLikeContent(html)) {
-            if (retryMode) {
-                var browserCipherFallback = tryBrowserRenderedContent(url);
-                dbg("dom_retry_cipher_len=" + String((browserCipherFallback || "").length));
-                if (browserCipherFallback && browserCipherFallback.length > 30) {
-                    clearAuthRetryNeeded();
-                    return Response.success(browserCipherFallback);
-                }
-            }
-            return loginRequiredErrorWithDebug(url, debug);
-        }
-
-        if (retryMode) {
-            var browserFinalFallback = tryBrowserRenderedContent(url);
-            dbg("dom_retry_final_len=" + String((browserFinalFallback || "").length));
-            if (browserFinalFallback && browserFinalFallback.length > 30) {
-                clearAuthRetryNeeded();
-                return Response.success(browserFinalFallback);
-            }
-        }
-
-        return loginRequiredErrorWithDebug(url, debug);
+        return Response.error(ERROR_LOGIN + "\n[DBG: " + dbg.join(" | ") + "]");
     } catch (e) {
-        return Response.error(ERROR_MESSAGE + "\n" + (url || BASE_SOURCE) + "\n[TTDBG] exception=" + String((e && e.message) || e || "unknown"));
+        return Response.error(ERROR_LOGIN + "\n[Exception: " + String((e && e.message) || e) + " | DBG: " + dbg.join("|") + "]");
     }
 }
+
