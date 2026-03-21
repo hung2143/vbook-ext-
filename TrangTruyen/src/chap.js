@@ -58,6 +58,7 @@ var BASE_SOURCE = "https://trangtruyen.site";
 var ERROR_MESSAGE = "Vui lòng vào trang nguồn " + BASE_SOURCE + ", đăng nhập rồi quay lại tải lại chương để đọc tiếp.";
 var AUTH_RETRY_KEY = "trangtruyen_auth_retry";
 var AUTH_RETRY_TTL_MS = 10 * 60 * 1000;
+var LAST_DECRYPT_DEBUG = "";
 
 function buildTrangTruyenHeaders(extra) {
     var headers = {
@@ -823,17 +824,24 @@ function paragraphsToHtml(paragraphs) {
 }
 
 function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCookie, forcedToken) {
+    LAST_DECRYPT_DEBUG = "";
     if (!canUseJavaCrypto()) return "";
     if (!chapterId || !cipherText || !contentMeta) return "";
 
     var enc = extractCipherObject(cipherText);
-    if (!enc || !enc.l2) return "";
+    if (!enc || !enc.l2) {
+        LAST_DECRYPT_DEBUG = "enc_missing";
+        return "";
+    }
 
     var grantId = pickFirstValue(contentMeta, ["grantId", "grantID", "id", "g", "gid"]);
     if (!grantId) {
         grantId = pickFirstValueDeep(contentMeta, ["grantId", "grantID", "id", "g", "gid"]);
     }
-    if (!grantId) return "";
+    if (!grantId) {
+        LAST_DECRYPT_DEBUG = "grant_missing";
+        return "";
+    }
 
     var ua = UserAgent.chrome() || "";
     var deviceProof = "fallback-" + sha256Hex([ua, "vi-VN", "0", "0", "UTC"].join("|")).substring(0, 32);
@@ -853,20 +861,55 @@ function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCooki
         resolveHeaders[hk] = authHeaders[hk];
     }
 
-    var resolveRes = fetch("https://trangtruyen.site/api/chapters/" + chapterId + "/resolve", {
-        method: "POST",
-        headers: buildTrangTruyenHeaders(resolveHeaders),
-        body: JSON.stringify({ grantId: grantId, deviceProof: deviceProof, uaHash: uaHash })
-    });
-    if (!resolveRes.ok) return "";
+    var resolveObj = null;
+    var resolveMode = "";
 
-    var resolveObj;
-    try {
-        resolveObj = resolveRes.json();
-    } catch (_) {
+    function tryResolve(url, options, mode) {
+        try {
+            var r = fetch(url, options);
+            if (!r || !r.ok) return null;
+            var j = r.json();
+            if (!j) return null;
+            resolveMode = mode;
+            return j;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    var resolveUrl = "https://trangtruyen.site/api/chapters/" + chapterId + "/resolve";
+    var resolveHeadersBuilt = buildTrangTruyenHeaders(resolveHeaders);
+
+    resolveObj = tryResolve(resolveUrl, {
+        method: "POST",
+        headers: resolveHeadersBuilt,
+        body: JSON.stringify({ grantId: grantId, deviceProof: deviceProof, uaHash: uaHash })
+    }, "post_full");
+
+    if (!resolveObj) {
+        resolveObj = tryResolve(resolveUrl, {
+            method: "POST",
+            headers: buildTrangTruyenHeaders({
+                "content-type": "application/json",
+                "origin": "https://trangtruyen.site"
+            }),
+            body: JSON.stringify({ grantId: grantId })
+        }, "post_grant_only");
+    }
+
+    if (!resolveObj) {
+        resolveObj = tryResolve(resolveUrl + "?grantId=" + encodeURIComponent(String(grantId)), {
+            method: "GET",
+            headers: buildTrangTruyenHeaders(buildApiAuthHeaders(forcedToken, forcedCookie))
+        }, "get_query");
+    }
+
+    if (!resolveObj) {
+        LAST_DECRYPT_DEBUG = "resolve_fail";
         return "";
     }
-    if (!resolveObj) return "";
+
+    LAST_DECRYPT_DEBUG = "resolve_ok:" + resolveMode;
 
     var resolveReadable = resolveToReadableHtml(resolveObj);
     if (resolveReadable && resolveReadable.length > 30) return resolveReadable;
@@ -877,10 +920,16 @@ function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCooki
         var v = String(enc[k] || "");
         if (/^[A-Za-z0-9+/=]{16,}$/.test(v)) b64.push(v);
     }
-    if (b64.length < 2) return "";
+    if (b64.length < 2) {
+        LAST_DECRYPT_DEBUG = "b64_parts_lt2";
+        return "";
+    }
 
     var keys = deriveKeyHexes(resolveObj, contentMeta, 120);
-    if (!keys.length) return "";
+    if (!keys.length) {
+        LAST_DECRYPT_DEBUG = "keys_empty";
+        return "";
+    }
 
     var stage1 = null;
     for (var i = 0; i < keys.length && !stage1; i++) {
@@ -896,17 +945,25 @@ function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCooki
             }
         }
     }
-    if (!stage1) return "";
+    if (!stage1) {
+        LAST_DECRYPT_DEBUG = "stage1_fail";
+        return "";
+    }
 
     for (var j = 0; j < keys.length; j++) {
         try {
             var t2 = aesGcmDecryptBase64Parts(stage1.d, stage1.i, stage1.g, keys[j]);
             var o2 = JSON.parse(t2);
             var ps = normalizeParagraphs(o2);
-            if (ps && ps.length) return paragraphsToHtml(ps);
+            if (ps && ps.length) {
+                LAST_DECRYPT_DEBUG = "ok_stage2";
+                return paragraphsToHtml(ps);
+            }
         } catch (_) {
         }
     }
+
+    LAST_DECRYPT_DEBUG = "stage2_fail";
 
     return "";
 }
@@ -1390,12 +1447,14 @@ function execute(url) {
             try {
                 var decrypted = tryDecryptCipherContent(chapterId, apiCipherInput, apiMeta, runtimeCookie, runtimeToken);
                 dbg("api_decrypt_len=" + String((decrypted || "").length));
+                dbg("api_decrypt_dbg=" + String(LAST_DECRYPT_DEBUG || ""));
                 if (decrypted && decrypted.length > 30) {
                     clearAuthRetryNeeded();
                     return Response.success(decrypted);
                 }
             } catch (_) {
                 dbg("api_decrypt_exception=1");
+                dbg("api_decrypt_dbg=" + String(LAST_DECRYPT_DEBUG || ""));
             }
         }
 
