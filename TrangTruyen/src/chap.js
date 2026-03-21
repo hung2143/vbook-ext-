@@ -637,10 +637,7 @@ function execute(url) {
             if (apiRes && apiRes.requireLogin) {
                 return loginRequiredError(url);
             }
-            if (apiHtml && isCipherLikeContent(apiHtml)) {
-                return Response.success("<p>Nội dung chương đang được mã hóa từ nguồn. Plugin hiện chưa giải mã tự động được chương này.</p>");
-            }
-            return Response.success("<p>Không tải được nội dung chương từ nguồn. Bạn có thể bấm 'Xem trang nguồn' rồi thử lại.</p>");
+            return loginRequiredError(url);
         }
 
         var doc = pageResponse.html("utf-8");
@@ -679,17 +676,10 @@ function execute(url) {
         }
 
         if ((apiHtml && isCipherLikeContent(apiHtml)) || isCipherLikeContent(html)) {
-            return Response.success("<p>Nội dung chương đang được mã hóa từ nguồn. Plugin hiện chưa giải mã tự động được chương này.</p>");
+            return loginRequiredError(url);
         }
 
-        return Response.success(
-            "<p>Không tải được nội dung chương từ nguồn.</p>" +
-            "<p>Chẩn đoán: " +
-            "runtimeCookie=" + (runtimeCookie ? "yes" : "no") +
-            ", apiRequireLogin=" + ((apiRes && apiRes.requireLogin) ? "yes" : "no") +
-            ", apiMeta=" + ((apiRes && apiRes.contentMetaV2) ? "yes" : "no") +
-            ".</p>"
-        );
+        return loginRequiredError(url);
     } catch (e) {
         return Response.error(ERROR_MESSAGE + "\n" + (url || BASE_SOURCE));
     }
