@@ -54,6 +54,9 @@ function extractChapterId(url) {
     return m ? m[1] : "";
 }
 
+var BASE_SOURCE = "https://trangtruyen.site";
+var ERROR_MESSAGE = "Vui lòng vào trang nguồn " + BASE_SOURCE + ", đăng nhập rồi quay lại tải lại chương để đọc tiếp.";
+
 function buildTrangTruyenHeaders(extra) {
     var headers = {
         "User-Agent": UserAgent.chrome(),
@@ -159,20 +162,6 @@ function getSessionCookie(url) {
     } catch (_) {
     }
     if (cookie) return cookie;
-
-    // Same idea as metruyenchu: open source page once so runtime can sync auth cookies.
-    try {
-        var browser = Engine.newBrowser();
-        browser.launch(url, 5000);
-        browser.close();
-    } catch (_) {
-    }
-
-    try {
-        var probe2 = fetch(url, { headers: buildTrangTruyenHeaders() });
-        cookie = extractRequestCookie(probe2);
-    } catch (_) {
-    }
 
     return cookie || "";
 }
@@ -604,7 +593,7 @@ function extractHtmlContent(doc) {
 }
 
 function loginRequiredError(url) {
-    return Response.error(url || "https://trangtruyen.site/");
+    return Response.error(ERROR_MESSAGE + "\n" + (url || BASE_SOURCE));
 }
 
 function execute(url) {
@@ -686,9 +675,6 @@ function execute(url) {
 
         var text = doc.text() || "";
         if (/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập/i.test(text) || (apiRes && apiRes.requireLogin)) {
-            if (hasAnyAuthCredential()) {
-                return Response.error(url || "https://trangtruyen.site/");
-            }
             return loginRequiredError(url);
         }
 
@@ -705,6 +691,6 @@ function execute(url) {
             ".</p>"
         );
     } catch (e) {
-        return Response.success("<p>Không tải được nội dung chương do lỗi tạm thời. Hãy thử tải lại hoặc mở trang nguồn.</p>");
+        return Response.error(ERROR_MESSAGE + "\n" + (url || BASE_SOURCE));
     }
 }
