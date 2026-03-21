@@ -54,6 +54,38 @@ function extractChapterId(url) {
     return m ? m[1] : "";
 }
 
+function buildTrangTruyenHeaders(extra) {
+    var headers = {
+        "user-agent": UserAgent.chrome(),
+        "referer": "https://trangtruyen.site/"
+    };
+
+    try {
+        var cookie = localCookie.getCookie();
+        if (cookie) headers["cookie"] = cookie;
+    } catch (_) {
+    }
+
+    try {
+        var token =
+            localStorage.getItem("trangtruyen_token") ||
+            localStorage.getItem("accessToken") ||
+            localStorage.getItem("token") ||
+            "";
+        if (token) headers["authorization"] = /^Bearer\s+/i.test(token) ? token : ("Bearer " + token);
+    } catch (_) {
+    }
+
+    if (extra) {
+        for (var k in extra) {
+            if (!extra.hasOwnProperty(k)) continue;
+            headers[k] = extra[k];
+        }
+    }
+
+    return headers;
+}
+
 function canUseJavaCrypto() {
     try {
         Java.type("java.security.MessageDigest");
@@ -345,13 +377,13 @@ function tryDecryptCipherContent(chapterId, cipherText, contentMeta) {
 
     var resolveRes = fetch("https://trangtruyen.site/api/chapters/" + chapterId + "/resolve", {
         method: "POST",
-        headers: {
+        headers: buildTrangTruyenHeaders({
             "user-agent": ua,
-            "referer": "https://trangtruyen.site/",
             "content-type": "application/json",
             "x-device-proof": deviceProof,
-            "x-client-ua-hash": uaHash
-        },
+            "x-client-ua-hash": uaHash,
+            "origin": "https://trangtruyen.site"
+        }),
         body: JSON.stringify({ grantId: grantId, deviceProof: deviceProof, uaHash: uaHash })
     });
     if (!resolveRes.ok) return "";
@@ -409,10 +441,7 @@ function tryApiContent(url) {
     if (!chapterId) return { content: "", requireLogin: false, chapterId: "", contentMetaV2: null };
 
     var response = fetch("https://trangtruyen.site/api/chapters/" + chapterId, {
-        headers: {
-            "user-agent": UserAgent.chrome(),
-            "referer": "https://trangtruyen.site/"
-        }
+        headers: buildTrangTruyenHeaders()
     });
     if (!response.ok) return { content: "", requireLogin: false, chapterId: chapterId, contentMetaV2: null };
 
@@ -473,10 +502,7 @@ function execute(url) {
         }
 
         var response = fetch(url, {
-            headers: {
-                "user-agent": UserAgent.chrome(),
-                "referer": "https://trangtruyen.site/"
-            }
+            headers: buildTrangTruyenHeaders()
         });
 
         if (!response.ok) {
