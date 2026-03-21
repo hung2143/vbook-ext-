@@ -56,6 +56,8 @@ function extractChapterId(url) {
 
 var BASE_SOURCE = "https://trangtruyen.site";
 var ERROR_MESSAGE = "Vui lòng vào trang nguồn " + BASE_SOURCE + ", đăng nhập rồi quay lại tải lại chương để đọc tiếp.";
+var AUTH_RETRY_KEY = "trangtruyen_auth_retry";
+var AUTH_RETRY_TTL_MS = 10 * 60 * 1000;
 
 function buildTrangTruyenHeaders(extra) {
     var headers = {
@@ -184,6 +186,78 @@ function hasAnyAuthCredential() {
     }
 
     return false;
+}
+
+function markAuthRetryNeeded() {
+    try {
+        localStorage.setItem(AUTH_RETRY_KEY, String(Date.now()));
+    } catch (_) {
+    }
+}
+
+function clearAuthRetryNeeded() {
+    try {
+        localStorage.removeItem(AUTH_RETRY_KEY);
+    } catch (_) {
+    }
+}
+
+function isAuthRetryNeeded() {
+    try {
+        var v = localStorage.getItem(AUTH_RETRY_KEY);
+        if (!v) return false;
+        var ts = parseInt(v, 10);
+        if (isNaN(ts)) return false;
+        if (Date.now() - ts > AUTH_RETRY_TTL_MS) {
+            localStorage.removeItem(AUTH_RETRY_KEY);
+            return false;
+        }
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function forceRefreshSession(url) {
+    var cookie = "";
+    var token = "";
+
+    try {
+        var browser = Engine.newBrowser();
+        browser.launch((url || BASE_SOURCE) + (String(url || BASE_SOURCE).indexOf("?") >= 0 ? "&" : "?") + "vbook_sync=" + Date.now(), 5000);
+        browser.close();
+    } catch (_) {
+    }
+
+    try {
+        cookie = localCookie.getCookie() || "";
+    } catch (_) {
+    }
+
+    if (!cookie) {
+        try {
+            var probe = fetch((url || BASE_SOURCE) + (String(url || BASE_SOURCE).indexOf("?") >= 0 ? "&" : "?") + "vbook_probe=" + Date.now(), {
+                headers: buildTrangTruyenHeaders()
+            });
+            cookie = extractRequestCookie(probe);
+        } catch (_) {
+        }
+    }
+
+    token = extractTokenFromCookie(cookie);
+    if (!token) {
+        try {
+            token =
+                localStorage.getItem("trangtruyen_token") ||
+                localStorage.getItem("accessToken") ||
+                localStorage.getItem("token") ||
+                "";
+        } catch (_) {
+            token = "";
+        }
+    }
+
+    return { cookie: cookie || "", token: token || "" };
 }
 
 function canUseJavaCrypto() {
@@ -593,11 +667,13 @@ function extractHtmlContent(doc) {
 }
 
 function loginRequiredError(url) {
+    markAuthRetryNeeded();
     return Response.error(ERROR_MESSAGE + "\n" + (url || BASE_SOURCE));
 }
 
 function execute(url) {
     try {
+        var retryMode = isAuthRetryNeeded();
         var runtimeCookie = getSessionCookie(url);
         var runtimeToken = "";
         try {
@@ -608,6 +684,12 @@ function execute(url) {
                 "";
         } catch (_) {
             runtimeToken = extractTokenFromCookie(runtimeCookie) || "";
+        }
+
+        if (retryMode) {
+            var refreshed = forceRefreshSession(url);
+            if (refreshed.cookie) runtimeCookie = refreshed.cookie;
+            if (refreshed.token) runtimeToken = refreshed.token;
         }
 
         var pageResponse = fetch(url, {
@@ -623,6 +705,7 @@ function execute(url) {
             try {
                 var decrypted = tryDecryptCipherContent(chapterId, apiHtml, apiMeta, runtimeCookie, runtimeToken);
                 if (decrypted && decrypted.length > 30) {
+                    clearAuthRetryNeeded();
                     return Response.success(decrypted);
                 }
             } catch (_) {
@@ -630,6 +713,7 @@ function execute(url) {
         }
 
         if (apiHtml && isReadableHtml(apiHtml) && !isCipherLikeContent(apiHtml)) {
+            clearAuthRetryNeeded();
             return Response.success(apiHtml);
         }
 
@@ -653,6 +737,7 @@ function execute(url) {
                     runtimeToken
                 );
                 if (decFromPage && decFromPage.length > 30) {
+                    clearAuthRetryNeeded();
                     return Response.success(decFromPage);
                 }
             } catch (_) {
@@ -662,11 +747,13 @@ function execute(url) {
         var html = extractHtmlContent(doc);
 
         if (isReadableHtml(html) && !isCipherLikeContent(html)) {
+            clearAuthRetryNeeded();
             return Response.success(html);
         }
 
         var textOnly = (doc.text() || "").replace(/\s+/g, " ").trim();
         if (textOnly && textOnly.length > 60 && !isCipherLikeContent(textOnly) && !/Yêu\s*cầu\s*đăng\s*nhập|Bạn\s*cần\s*đăng\s*nhập|Mã\s*chương\s*không\s*hợp\s*lệ/i.test(textOnly)) {
+            clearAuthRetryNeeded();
             return Response.success(plainTextToHtml(textOnly));
         }
 
