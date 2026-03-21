@@ -431,6 +431,15 @@ function pickFirstValue(obj, names) {
     return "";
 }
 
+function pickFirstValueDeep(obj, names) {
+    if (!obj || !names || !names.length) return "";
+    for (var i = 0; i < names.length; i++) {
+        var hit = findFirstKeyDeep(obj, names[i]);
+        if (hit !== null && hit !== undefined && String(hit) !== "") return String(hit);
+    }
+    return "";
+}
+
 function collectValueCandidates(obj) {
     var vals = [];
     var seen = {};
@@ -580,17 +589,95 @@ function deriveKeyHexes(resolveObj, metaObj, maxKeys) {
 }
 
 function extractCipherObject(text) {
-    var s = htmlToText(text || "");
+    if (!text) return null;
+
+    var rawText = String(text || "");
+
+    // Try direct JSON parse first.
+    try {
+        var direct = JSON.parse(rawText);
+        if (direct && direct.l2) return direct;
+        var deepHit = findFirstKeyDeep(direct, "l2");
+        if (deepHit) {
+            var container = findCipherContainerDeep(direct);
+            if (container) return container;
+        }
+    } catch (_) {
+    }
+
+    var s = htmlToText(rawText);
+
+    // Try to parse compact object snippets that contain "l2".
+    var idx = s.indexOf('"l2"');
+    if (idx >= 0) {
+        var left = idx;
+        while (left >= 0 && s.charAt(left) !== "{") left--;
+        if (left >= 0) {
+            for (var right = idx; right < s.length; right++) {
+                if (s.charAt(right) !== "}") continue;
+                var chunk = s.substring(left, right + 1);
+                try {
+                    var objChunk = JSON.parse(chunk);
+                    if (objChunk && objChunk.l2) return objChunk;
+                } catch (_) {
+                }
+            }
+        }
+    }
+
+    // Fallback: first-to-last braces.
     var start = s.indexOf("{");
     var end = s.lastIndexOf("}");
-    if (start < 0 || end <= start) return null;
-    var raw = s.substring(start, end + 1);
-    try {
-        var obj = JSON.parse(raw);
-        return obj && obj.l2 ? obj : null;
-    } catch (_) {
+    if (start >= 0 && end > start) {
+        try {
+            var obj = JSON.parse(s.substring(start, end + 1));
+            if (obj && obj.l2) return obj;
+            return findCipherContainerDeep(obj);
+        } catch (_) {
+        }
+    }
+
+    return null;
+}
+
+function findCipherContainerDeep(obj) {
+    if (!obj || typeof obj !== "object") return null;
+    if (obj.l2 && typeof obj.l2 === "string") return obj;
+
+    if (Array.isArray(obj)) {
+        for (var i = 0; i < obj.length; i++) {
+            var hitArr = findCipherContainerDeep(obj[i]);
+            if (hitArr) return hitArr;
+        }
         return null;
     }
+
+    for (var k in obj) {
+        if (!obj.hasOwnProperty(k)) continue;
+        var hit = findCipherContainerDeep(obj[k]);
+        if (hit) return hit;
+    }
+    return null;
+}
+
+function resolveToReadableHtml(resolveObj) {
+    if (!resolveObj) return "";
+
+    var directText = pickFirstValueDeep(resolveObj, ["content", "text", "body", "chapterContent"]);
+    if (directText) {
+        var cleanedDirect = cleanHtml(String(directText));
+        if (isReadableHtml(cleanedDirect) && !isCipherLikeContent(cleanedDirect)) return cleanedDirect;
+
+        var plain = htmlToText(cleanedDirect || directText).replace(/\s+/g, " ").trim();
+        if (plain.length > 120) return plainTextToHtml(plain);
+    }
+
+    var paragraphLike = findFirstKeyDeep(resolveObj, "paragraphs") || findFirstKeyDeep(resolveObj, "lines") || findFirstKeyDeep(resolveObj, "p");
+    if (paragraphLike && paragraphLike.length) {
+        return paragraphsToHtml(paragraphLike);
+    }
+
+    return "";
 }
 
 function normalizeParagraphs(payload) {
@@ -743,6 +830,9 @@ function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCooki
     if (!enc || !enc.l2) return "";
 
     var grantId = pickFirstValue(contentMeta, ["grantId", "grantID", "id", "g", "gid"]);
+    if (!grantId) {
+        grantId = pickFirstValueDeep(contentMeta, ["grantId", "grantID", "id", "g", "gid"]);
+    }
     if (!grantId) return "";
 
     var ua = UserAgent.chrome() || "";
@@ -777,6 +867,9 @@ function tryDecryptCipherContent(chapterId, cipherText, contentMeta, forcedCooki
         return "";
     }
     if (!resolveObj) return "";
+
+    var resolveReadable = resolveToReadableHtml(resolveObj);
+    if (resolveReadable && resolveReadable.length > 30) return resolveReadable;
 
     var b64 = [];
     for (var k in enc) {
