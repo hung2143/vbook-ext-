@@ -2,8 +2,6 @@ var BASE_URL = "https://trangtruyen.site";
 var API_BASE  = BASE_URL + "/api";
 
 var ERROR_COOKIE_GUIDE = [
-    "Session bị đá ra ngoài do trang phát hiện plugin.",
-    "",
     "Cách fix: Nhập cookie thủ công qua \"Mã bổ sung\":",
     "1. Mở Chrome (PC) → vào trangtruyen.site → đăng nhập",
     "2. Nhấn F12 → Application → Cookies → trangtruyen.site",
@@ -215,13 +213,16 @@ function getSiteCookie(url) {
 
     if (manualCk) {
         var result = manualCk;
-        if (!manualCk.includes("cf_clearance") && webviewCk) {
+        if (webviewCk) {
             var cfVal = extractCookieValue(webviewCk, "cf_clearance");
-            if (cfVal) result = manualCk + "; cf_clearance=" + cfVal;
-        }
-        if (!result.includes("_cfuvid") && webviewCk) {
-            var cfuVal = extractCookieValue(webviewCk, "_cfuvid");
-            if (cfuVal) result = result + "; _cfuvid=" + cfuVal;
+            if (cfVal) {
+                result = result.replace(/;\s*cf_clearance=[^;]*/gi, "").replace(/^cf_clearance=[^;]*;\s*/gi, "").trim();
+                result += "; cf_clearance=" + cfVal;
+            }
+            if (!result.includes("_cfuvid")) {
+                var cfuVal = extractCookieValue(webviewCk, "_cfuvid");
+                if (cfuVal) result += "; _cfuvid=" + cfuVal;
+            }
         }
         return result;
     }
