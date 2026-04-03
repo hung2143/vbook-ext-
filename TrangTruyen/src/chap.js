@@ -270,11 +270,19 @@ function makeHeaders(cookie, extra) {
 function fetchChapterMeta(chapterId, cookie) {
     try {
         var res = fetch(API_BASE + "/chapters/" + chapterId, {
-            headers: makeHeaders(cookie)
+            headers: makeHeaders(null)
         });
-        if (!res || !res.ok) return null;
-        return res.json();
-    } catch (_) { return null; }
+        if (res && res.ok) return res.json();
+    } catch (_) {}
+    if (cookie) {
+        try {
+            var res2 = fetch(API_BASE + "/chapters/" + chapterId, {
+                headers: makeHeaders(cookie)
+            });
+            if (res2 && res2.ok) return res2.json();
+        } catch (_) {}
+    }
+    return null;
 }
 
 function registerReaderDevice(cookie, publicKeyB64) {
@@ -329,23 +337,33 @@ function openSegment(chapterId, contentSession, deviceKeyId, privateKey, segment
         if (signature) {
             body.readerDeviceSignature = signature;
         }
-        var headers = makeHeaders(cookie, {
+        var extraH = {
             "X-Reader-Device-Id": deviceKeyId || "",
             "X-Reader-Layout-Profile": "default",
             "X-Reader-Layout-Width": "800"
-        });
+        };
         var res = fetch(API_BASE + "/chapters/" + chapterId + "/segment/open", {
             method: "POST",
-            headers: headers,
+            headers: makeHeaders(null, extraH),
             body: JSON.stringify(body)
         });
-        if (!res || !res.ok) return null;
-        return res.json();
+        if (res && res.ok) return res.json();
+        if (cookie) {
+            var res2 = fetch(API_BASE + "/chapters/" + chapterId + "/segment/open", {
+                method: "POST",
+                headers: makeHeaders(cookie, extraH),
+                body: JSON.stringify(body)
+            });
+            if (res2 && res2.ok) return res2.json();
+        }
+        return null;
     } catch (_) { return null; }
 }
 
 function decryptSegment(segJson, grantSecret) {
+
     if (!segJson) return "";
+
     if (segJson.paragraphs && segJson.paragraphs.length) {
         var arr = segJson.paragraphs;
         var out = [];
@@ -462,8 +480,7 @@ function execute(url) {
 
         var webviewCk = getWebviewCookie();
         var manualCk  = getManualCookie();
-
-        var cookie = webviewCk || getSiteCookie(url);
+        var cookie    = getSiteCookie(url);
         log("manualCk=" + (manualCk ? "1" : "0"));
         log("webviewCk=" + (webviewCk ? "1" : "0"));
         log("cookieLen=" + (cookie || "").length);
@@ -472,13 +489,6 @@ function execute(url) {
 
         var apiJson = fetchChapterMeta(chapterId, cookie);
         log("chapApiOk=" + (apiJson ? "1" : "0"));
-
-        if (!apiJson && manualCk) {
-            log("retryWithManual=1");
-            cookie = getSiteCookie(url);
-            apiJson = fetchChapterMeta(chapterId, cookie);
-            log("chapApiOk2=" + (apiJson ? "1" : "0"));
-        }
 
         if (apiJson) {
             var chapter = apiJson.chapter || {};
