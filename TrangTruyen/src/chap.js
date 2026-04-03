@@ -1,19 +1,3 @@
-// ============================================================
-// TrangTruyen - chap.js (v4 - Cookie Injection + RSA Bypass)
-// Lấy nội dung chương từ trangtruyen.site
-//
-// CÁCH DÙNG (nếu bị đá logout):
-//   1. Mở Chrome trên PC → vào trangtruyen.site → đăng nhập
-//   2. Mở DevTools (F12) → Application → Cookies → trangtruyen.site
-//   3. Copy giá trị của cookie "trangtruyen.sid" (và "cf_clearance" nếu có)
-//   4. Trong vBook: giữ plugin → Mã bổ sung → nhập:
-//        let TRANGTRUYEN_COOKIE = "trangtruyen.sid=GIÁ_TRỊ_Ở_ĐÂY";
-//   5. Nhấn OK → mở chương truyện
-//
-// Nếu có cả cf_clearance:
-//        let TRANGTRUYEN_COOKIE = "trangtruyen.sid=ABC; cf_clearance=XYZ";
-// ============================================================
-
 var BASE_URL = "https://trangtruyen.site";
 var API_BASE  = BASE_URL + "/api";
 
@@ -28,10 +12,6 @@ var ERROR_COOKIE_GUIDE = [
     "   let TRANGTRUYEN_COOKIE = \"trangtruyen.sid=GIÁ_TRỊ\"",
     "5. OK → thử lại"
 ].join("\n");
-
-var ERROR_LOGIN = "Vui lòng vào trang nguồn " + BASE_URL + ", đăng nhập, rồi quay lại nhấn Tải lại.";
-
-// ---- Utilities ----
 
 function safeJsonParse(s) {
     try { return JSON.parse(s); } catch (_) { return null; }
@@ -88,8 +68,6 @@ function cleanContent(html) {
     return html;
 }
 
-// ---- Java Crypto helpers (RSA + AES-GCM) ----
-
 function canUseJavaCrypto() {
     try {
         Java.type("javax.crypto.Cipher");
@@ -120,7 +98,6 @@ function sha256Hex(input) {
     }
 }
 
-// Tạo RSA-2048 keypair, trả về {privateKey: CryptoKey, publicKeyB64: string}
 var _rsaKeyCache = null;
 function generateRsaKeyPair() {
     if (_rsaKeyCache) return _rsaKeyCache;
@@ -130,7 +107,7 @@ function generateRsaKeyPair() {
         var kpg = KPG.getInstance("RSA");
         kpg.initialize(2048);
         var kp = kpg.generateKeyPair();
-        var pubEncoded = kp.getPublic().getEncoded(); // SPKI format
+        var pubEncoded = kp.getPublic().getEncoded();
         var pubB64 = String(B64.getEncoder().encodeToString(pubEncoded));
         _rsaKeyCache = { privateKey: kp.getPrivate(), publicKeyB64: pubB64 };
         return _rsaKeyCache;
@@ -139,7 +116,6 @@ function generateRsaKeyPair() {
     }
 }
 
-// Ký payload bằng RSA-SHA256, trả về base64
 function rsaSign(privateKey, payload) {
     try {
         var Sig = Java.type("java.security.Signature");
@@ -155,7 +131,6 @@ function rsaSign(privateKey, payload) {
     }
 }
 
-// AES-GCM decrypt: data=b64, iv=b64, keyB64=b64
 function aesGcmDecryptB64(dataB64, ivB64, keyB64) {
     try {
         var Cipher = Java.type("javax.crypto.Cipher");
@@ -175,11 +150,9 @@ function aesGcmDecryptB64(dataB64, ivB64, keyB64) {
     }
 }
 
-// AES-GCM decrypt từ raw bytes (IV 12 bytes đầu) + key là hex
 function hexToBytes(hex) {
     var clean = String(hex || "").replace(/[^0-9a-f]/gi, "");
     if (clean.length % 2 === 1) clean = "0" + clean;
-    var B64 = Java.type("java.util.Base64");
     var out = Java.type("byte[]")(Math.floor(clean.length / 2));
     for (var i = 0; i < out.length; i++) {
         out[i] = java.lang.Integer.parseInt(clean.substring(i*2, i*2+2), 16);
@@ -210,14 +183,8 @@ function aesGcmDecryptWithIvPrefix(rawBytes_b64, keyHex) {
     }
 }
 
-// ---- Get Cookie ----
-
-// Đọc cookie được inject thủ công qua "Mã bổ sung"
-// Biến TRANGTRUYEN_COOKIE được set bởi người dùng trong vBook
 function getManualCookie() {
     try {
-        // Biến này được inject từ "Mã bổ sung" của vBook
-        // Dạng: let TRANGTRUYEN_COOKIE = "trangtruyen.sid=abc; cf_clearance=xyz";
         if (typeof TRANGTRUYEN_COOKIE !== "undefined" &&
             TRANGTRUYEN_COOKIE &&
             String(TRANGTRUYEN_COOKIE).length > 10) {
@@ -227,18 +194,40 @@ function getManualCookie() {
     return "";
 }
 
-function getSiteCookie(url) {
-    // Ưu tiên 1: Cookie nhập thủ công qua "Mã bổ sung"
-    var manual = getManualCookie();
-    if (manual) return manual;
+function extractCookieValue(cookieStr, name) {
+    if (!cookieStr || !name) return "";
+    var pattern = new RegExp("(?:^|;\\s*)" + name + "=([^;]*)");
+    var m = String(cookieStr).match(pattern);
+    return m ? m[1] : "";
+}
 
-    // Ưu tiên 2: localCookie API của vBook
+function getWebviewCookie() {
     try {
         var c = localCookie.getCookie();
         if (c && c.length > 5) return String(c);
     } catch (_) {}
+    return "";
+}
 
-    // Ưu tiên 3: Cookie từ request header
+function getSiteCookie(url) {
+    var manualCk = getManualCookie();
+    var webviewCk = getWebviewCookie();
+
+    if (manualCk) {
+        var result = manualCk;
+        if (!manualCk.includes("cf_clearance") && webviewCk) {
+            var cfVal = extractCookieValue(webviewCk, "cf_clearance");
+            if (cfVal) result = manualCk + "; cf_clearance=" + cfVal;
+        }
+        if (!result.includes("_cfuvid") && webviewCk) {
+            var cfuVal = extractCookieValue(webviewCk, "_cfuvid");
+            if (cfuVal) result = result + "; _cfuvid=" + cfuVal;
+        }
+        return result;
+    }
+
+    if (webviewCk) return webviewCk;
+
     try {
         var res = fetch(BASE_URL + "/", {
             headers: { "User-Agent": UserAgent.chrome() }
@@ -253,12 +242,9 @@ function getSiteCookie(url) {
     return "";
 }
 
-// Kiểm tra cookie có chứa session hợp lệ không
 function hasSidCookie(cookie) {
     return cookie && /trangtruyen\.sid/.test(cookie);
 }
-
-// ---- API Calls ----
 
 function makeHeaders(cookie, extra) {
     var ua = UserAgent.chrome();
@@ -280,7 +266,6 @@ function makeHeaders(cookie, extra) {
     return h;
 }
 
-// Bước 1: Lấy chapter meta (không cần auth cho public chapters)
 function fetchChapterMeta(chapterId, cookie) {
     try {
         var res = fetch(API_BASE + "/chapters/" + chapterId, {
@@ -291,7 +276,6 @@ function fetchChapterMeta(chapterId, cookie) {
     } catch (_) { return null; }
 }
 
-// Bước 2: Register reader-device (RSA)
 function registerReaderDevice(cookie, publicKeyB64) {
     try {
         var res = fetch(API_BASE + "/auth/reader-device/register", {
@@ -305,7 +289,6 @@ function registerReaderDevice(cookie, publicKeyB64) {
     } catch (_) { return null; }
 }
 
-// Bước 3: Reader bootstrap
 function readerBootstrap(cookie) {
     try {
         var res = fetch(API_BASE + "/auth/reader-bootstrap", {
@@ -318,7 +301,6 @@ function readerBootstrap(cookie) {
     } catch (_) { return null; }
 }
 
-// Bước 4: Mở segment với RSA signature
 function openSegment(chapterId, contentSession, deviceKeyId, privateKey, segmentIndex, cookie, clientCounter) {
     try {
         var ua = UserAgent.chrome();
@@ -328,15 +310,9 @@ function openSegment(chapterId, contentSession, deviceKeyId, privateKey, segment
         var sessionId = (contentSession && contentSession.sessionId) ? String(contentSession.sessionId) : "";
         var counter   = clientCounter != null ? String(clientCounter) : "0";
         var segIdx    = segmentIndex != null ? String(segmentIndex) : "0";
-
-        // Payload để ký: sessionId:chapterId:segmentIndex:counter:deviceKeyId:issuedAt
         var payload = [sessionId, chapterId, segIdx, counter, deviceKeyId, issuedAt].join(":");
-
-        // sessionProof = sha256 của sessionId:chapterId:segIdx
         var sessionProof = sha256Hex([sessionId, chapterId, segIdx].join(":"));
-
         var signature = privateKey ? rsaSign(privateKey, payload) : "";
-
         var body = {
             contentSessionId: sessionId,
             targetSegment: parseInt(segIdx, 10),
@@ -354,13 +330,11 @@ function openSegment(chapterId, contentSession, deviceKeyId, privateKey, segment
         if (signature) {
             body.readerDeviceSignature = signature;
         }
-
         var headers = makeHeaders(cookie, {
             "X-Reader-Device-Id": deviceKeyId || "",
             "X-Reader-Layout-Profile": "default",
             "X-Reader-Layout-Width": "800"
         });
-
         var res = fetch(API_BASE + "/chapters/" + chapterId + "/segment/open", {
             method: "POST",
             headers: headers,
@@ -371,10 +345,8 @@ function openSegment(chapterId, contentSession, deviceKeyId, privateKey, segment
     } catch (_) { return null; }
 }
 
-// Giải mã segment response (dạng JSON từ segment/open)
 function decryptSegment(segJson, grantSecret) {
     if (!segJson) return "";
-    // Segment có thể có trực tiếp paragraphs
     if (segJson.paragraphs && segJson.paragraphs.length) {
         var arr = segJson.paragraphs;
         var out = [];
@@ -384,14 +356,12 @@ function decryptSegment(segJson, grantSecret) {
         }
         return out.join("\n");
     }
-    // Dạng encrypted {l2, ...}
     if (segJson.l2 && grantSecret) {
         try {
             var stage1Text = aesGcmDecryptWithIvPrefix(segJson.l2, grantSecret);
             if (!stage1Text) return "";
             var s1 = safeJsonParse(stage1Text);
             if (s1 && s1.d && s1.i && s1.g) {
-                // Stage 2: decrypt d với iv=i, key=g (có thể là b64 key)
                 var stage2Text = aesGcmDecryptB64(s1.d, s1.i, s1.g);
                 if (stage2Text) return parseContentToHtml(stage2Text);
             }
@@ -399,7 +369,6 @@ function decryptSegment(segJson, grantSecret) {
             if (stage1Text.length > 80) return plainTextToHtml(stage1Text);
         } catch (_) {}
     }
-    // Segment dạng content string thuần
     if (segJson.content) {
         return plainTextToHtml(cleanZeroWidth(String(segJson.content)));
     }
@@ -428,7 +397,6 @@ function parseContentToHtml(text) {
     return "";
 }
 
-// ---- API approach: /resolve (fallback từ v2) ----
 function callResolveApi(chapterId, grantId, cookie) {
     var ua = UserAgent.chrome();
     var uaHash = sha256Hex(ua);
@@ -462,73 +430,6 @@ function callResolveApi(chapterId, grantId, cookie) {
     return "";
 }
 
-// ---- Browser render (phương án fallback chính) ----
-function tryBrowserRender(url, cookie) {
-    var browser = null;
-    try {
-        browser = Engine.newBrowser();
-        // Chờ 20 giây để RSA device binding + decrypt chạy xong
-        browser.launch(url, 20000);
-
-        var contentScript = "(function(){" +
-            "var sels=['.chapter-content','#chapter-content','.reader-content','.chapter-body','.content-render','[class*=\"chapter\"]'];" +
-            "for(var i=0;i<sels.length;i++){" +
-            "  var n=document.querySelector(sels[i]);if(!n)continue;" +
-            "  var t=(n.innerText||n.textContent||'').replace(/[\\u200B-\\u200F\\u202A-\\u202E\\u2060\\uFEFF]/g,'').replace(/\\s+/g,' ').trim();" +
-            "  if(t.length>150&&!/đăng nhập|login|yêu cầu đăng|chưa đăng nhập|401|403|Unauthorized/i.test(t)){return n.innerHTML||t;}" +
-            "}" +
-            // Thử tìm các paragraphs được render bởi React/Vue
-            "var ps=document.querySelectorAll('article p,main p,.reader p');var txt='';var html='';" +
-            "for(var i=0;i<ps.length;i++){var t=(ps[i].innerText||'').trim();if(t.length>10){txt+=t+' ';html+='<p>'+t+'</p>';}}" +
-            "if(txt.length>200&&!/đăng nhập|login/i.test(txt))return html;" +
-            "return '';})()";
-
-        var result = "";
-        try {
-            var docAfter = browser.callJs(contentScript, 5000);
-            if (docAfter) {
-                var txt = "";
-                try { txt = String(docAfter.text ? docAfter.text() : String(docAfter)).replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "").replace(/\s+/g, " ").trim(); } catch (_) { txt = String(docAfter); }
-                if (txt.length > 150 && !isLoginRequired(txt)) result = txt;
-            }
-        } catch (_) {}
-
-        if (!result) {
-            try {
-                var finalDoc = browser.html();
-                if (finalDoc) {
-                    var sels = [".chapter-content", "#chapter-content", ".reader-content", ".chapter-body", ".content-render"];
-                    for (var i = 0; i < sels.length && !result; i++) {
-                        try {
-                            var node = finalDoc.select(sels[i]).first();
-                            if (!node) continue;
-                            var nodeText = cleanZeroWidth(String(node.text ? node.text() : "").replace(/\s+/g, " ").trim());
-                            if (nodeText.length > 150 && !isLoginRequired(nodeText)) {
-                                result = String(node.html ? node.html() : nodeText);
-                            }
-                        } catch (_) {}
-                    }
-                }
-            } catch (_) {}
-        }
-
-        try { browser.close(); } catch (_) {}
-
-        if (result) {
-            var cleaned = cleanContent(result);
-            var text = htmlToText(cleaned);
-            if (isGoodContent(text)) {
-                if (/<p[\s>]|<br/.test(cleaned)) return cleaned;
-                return plainTextToHtml(text);
-            }
-        }
-    } catch (_) {
-        try { if (browser) browser.close(); } catch (__) {}
-    }
-    return "";
-}
-
-// ---- HTML fetch fallback ----
 function tryHtmlFetch(url, cookie) {
     try {
         var headers = { "User-Agent": UserAgent.chrome(), "Referer": BASE_URL + "/" };
@@ -550,8 +451,6 @@ function tryHtmlFetch(url, cookie) {
     return "";
 }
 
-// ---- Main execute ----
-
 function execute(url) {
     var dbg = [];
     function log(s) { try { dbg.push(String(s)); } catch (_) {} }
@@ -562,17 +461,14 @@ function execute(url) {
 
         log("chapId=" + chapterId.substring(0, 12));
 
-        // Lấy cookie để xác thực
+        var cookie = getSiteCookie(url);
         var manualCk = getManualCookie();
-        var cookie = manualCk || getSiteCookie(url);
         log("manualCk=" + (manualCk ? "1" : "0"));
         log("hasCookie=" + (cookie ? "1" : "0"));
         log("cookieLen=" + (cookie || "").length);
         log("hasSid=" + (hasSidCookie(cookie) ? "1" : "0"));
+        log("hasCf=" + (/cf_clearance/.test(cookie || "") ? "1" : "0"));
 
-        // ========================
-        // Bước 1: Lấy chapter meta
-        // ========================
         var apiJson = fetchChapterMeta(chapterId, cookie);
         log("chapApiOk=" + (apiJson ? "1" : "0"));
 
@@ -581,21 +477,16 @@ function execute(url) {
             var contentStr = String(chapter.content || "");
             log("contentLen=" + contentStr.length);
 
-            // Kiểm tra nội dung không mã hóa (chương miễn phí)
             var parsedContent = safeJsonParse(contentStr);
             if (contentStr && !parsedContent) {
                 var cleaned0 = cleanContent(contentStr);
                 var text0 = htmlToText(cleaned0);
                 if (isGoodContent(text0)) {
-                    log("freeHtml=1");
                     if (/<p[\s>]|<br/.test(cleaned0)) return Response.success(cleaned0);
                     return Response.success(plainTextToHtml(text0));
                 }
             }
 
-            // ========================
-            // Bước 2: Thử /resolve (API cũ v2)
-            // ========================
             var meta = apiJson.contentMetaV2 || chapter.contentMetaV2 || null;
             var grantId = "";
             if (meta) grantId = meta.grantId || meta.grantID || meta.id || meta.g || "";
@@ -626,47 +517,37 @@ function execute(url) {
                 }
             }
 
-            // ========================
-            // Bước 3: Thử RSA Device Binding + Segment API
-            // ========================
             if (cookie && canUseJavaCrypto()) {
                 log("trySegmentApi=1");
                 var contentSession = apiJson.contentSession || null;
                 log("contentSession=" + (contentSession ? "1" : "0"));
 
-                // Tạo RSA key pair
                 var keyPair = generateRsaKeyPair();
                 log("rsaKeyOk=" + (keyPair ? "1" : "0"));
 
                 if (keyPair) {
-                    // Register device
                     var deviceKeyId = registerReaderDevice(cookie, keyPair.publicKeyB64);
                     log("deviceKeyId=" + (deviceKeyId ? deviceKeyId.substring(0, 12) : "none"));
 
                     if (!deviceKeyId) {
-                        // Thử bootstrap trước
                         var bs = readerBootstrap(cookie);
                         log("bootstrap=" + (bs ? "1" : "0"));
                         deviceKeyId = registerReaderDevice(cookie, keyPair.publicKeyB64);
                         log("deviceKeyId2=" + (deviceKeyId ? deviceKeyId.substring(0, 12) : "none"));
                     }
 
-                    // Gọi segment/open (segment 0)
                     var segResult = openSegment(chapterId, contentSession, deviceKeyId, keyPair.privateKey, 0, cookie, 0);
                     log("segResult=" + (segResult ? "1" : "0"));
 
                     if (segResult) {
-                        // Lấy grant secret nếu có
                         var segGrantSecret = segResult.grantSecret || (segResult.session && segResult.session.grantSecret) || "";
                         var segContent = decryptSegment(segResult, segGrantSecret);
                         log("segContentLen=" + (segContent || "").length);
 
                         if (isGoodContent(htmlToText(segContent))) {
-                            log("segSuccess=1");
                             return Response.success(cleanContent(segContent));
                         }
 
-                        // Nếu có nhiều segments, tiếp tục lấy
                         var totalSegments = segResult.totalSegments || segResult.segmentCount || 0;
                         if (totalSegments > 1) {
                             var fullHtml = segContent;
@@ -687,16 +568,6 @@ function execute(url) {
             }
         }
 
-        // ========================
-        // Bước 4: Browser render (ĐÃ BỎ vì bị detect)
-        // - Site phát hiện WebView của app và kill session
-        // - Dùng cookie thủ công từ "Mã bổ sung" thay thế
-        // ========================
-        // log("tryBrowser=skip");
-
-        // ========================
-        // Bước 5: HTML fetch thuần (cho chương miễn phí không JS)
-        // ========================
         log("tryHtmlFetch=1");
         var htmlResult = tryHtmlFetch(url, cookie);
         log("htmlFetchLen=" + (htmlResult || "").length);
@@ -704,24 +575,15 @@ function execute(url) {
             return Response.success(htmlResult);
         }
 
-        // ========================
-        // Error: Hướng dẫn dùng cookie thủ công
-        // ========================
         var dbgStr = "[DBG: " + dbg.join(" | ") + "]";
 
         if (!hasSidCookie(cookie)) {
-            // Chưa có cookie hoặc cookie không có session
-            return Response.error(
-                ERROR_COOKIE_GUIDE + "\n\n" + dbgStr
-            );
+            return Response.error(ERROR_COOKIE_GUIDE + "\n\n" + dbgStr);
         }
 
-        // Có cookie nhưng vẫn không lấy được → session bị kill
         return Response.error(
             "Session bị trang phát hiện và vô hiệu hoá.\n\n" +
             ERROR_COOKIE_GUIDE + "\n\n" +
-            "Lưu ý: Lấy cookie khi đang đăng nhập trên Chrome PC,\n" +
-            "KHÔNG dùng cookie từ app vBook (sẽ bị detect).\n\n" +
             dbgStr
         );
 
