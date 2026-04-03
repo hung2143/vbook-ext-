@@ -315,18 +315,16 @@ function openSegment(chapterId, contentSession, deviceKeyId, privateKey, segment
         var sessionProof = sha256Hex([sessionId, chapterId, segIdx].join(":"));
         var signature = privateKey ? rsaSign(privateKey, payload) : "";
         var body = {
-            contentSessionId: sessionId,
+            sessionId: sessionId,
             targetSegment: parseInt(segIdx, 10),
-            fromSegment: -1,
-            reason: "initial",
             deviceProof: deviceProof,
-            uaHash: uaHash
+            uaHash: uaHash,
+            clientCounter: parseInt(counter, 10)
         };
         if (deviceKeyId) {
             body.readerDeviceId = deviceKeyId;
             body.readerDeviceIssuedAt = parseInt(issuedAt, 10);
             body.sessionProof = sessionProof;
-            body.clientCounter = parseInt(counter, 10);
         }
         if (signature) {
             body.readerDeviceSignature = signature;
@@ -462,16 +460,25 @@ function execute(url) {
 
         log("chapId=" + chapterId.substring(0, 12));
 
-        var cookie = getSiteCookie(url);
-        var manualCk = getManualCookie();
+        var webviewCk = getWebviewCookie();
+        var manualCk  = getManualCookie();
+
+        var cookie = webviewCk || getSiteCookie(url);
         log("manualCk=" + (manualCk ? "1" : "0"));
-        log("hasCookie=" + (cookie ? "1" : "0"));
+        log("webviewCk=" + (webviewCk ? "1" : "0"));
         log("cookieLen=" + (cookie || "").length);
         log("hasSid=" + (hasSidCookie(cookie) ? "1" : "0"));
         log("hasCf=" + (/cf_clearance/.test(cookie || "") ? "1" : "0"));
 
         var apiJson = fetchChapterMeta(chapterId, cookie);
         log("chapApiOk=" + (apiJson ? "1" : "0"));
+
+        if (!apiJson && manualCk) {
+            log("retryWithManual=1");
+            cookie = getSiteCookie(url);
+            apiJson = fetchChapterMeta(chapterId, cookie);
+            log("chapApiOk2=" + (apiJson ? "1" : "0"));
+        }
 
         if (apiJson) {
             var chapter = apiJson.chapter || {};
@@ -520,8 +527,12 @@ function execute(url) {
 
             if (cookie && canUseJavaCrypto()) {
                 log("trySegmentApi=1");
-                var contentSession = apiJson.contentSession || null;
+                var contentSession = apiJson.contentSession || apiJson.data && apiJson.data.contentSession || null;
                 log("contentSession=" + (contentSession ? "1" : "0"));
+                if (contentSession) {
+                    log("sessionId=" + (contentSession.sessionId ? contentSession.sessionId.substring(0,8) : "none"));
+                    log("codec=" + (contentSession.segmentCodec || "?"));
+                }
 
                 var keyPair = generateRsaKeyPair();
                 log("rsaKeyOk=" + (keyPair ? "1" : "0"));
