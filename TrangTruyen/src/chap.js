@@ -2,13 +2,7 @@ var BASE_URL = "https://trangtruyen.site";
 var API_BASE  = BASE_URL + "/api";
 
 var ERROR_COOKIE_GUIDE = [
-    "Cách fix: Nhập cookie thủ công qua \"Mã bổ sung\":",
-    "1. Mở Chrome (PC) → vào trangtruyen.site → đăng nhập",
-    "2. Nhấn F12 → Application → Cookies → trangtruyen.site",
-    "3. Copy giá trị 'trangtruyen.sid'",
-    "4. Giữ plugin trong vBook → Mã bổ sung → nhập:",
-    "   let TRANGTRUYEN_COOKIE = \"trangtruyen.sid=GIÁ_TRỊ\"",
-    "5. OK → thử lại"
+    "jey to jey97 "
 ].join("\n");
 
 function safeJsonParse(s) {
@@ -317,23 +311,42 @@ function makeHeaders(cookie, extra) {
     return h;
 }
 
-function fetchChapterMeta(chapterId, cookie) {
-    try {
-        var res = fetch(API_BASE + "/chapters/" + chapterId, {
-            headers: makeHeaders(null)
-        });
-        if (res && res.ok) return res.json();
-    } catch (_) {}
-    if (cookie) {
+function readerBootstrap(cookie) {
+    var attemptCookies = [null, cookie || ""];
+    for (var ai = 0; ai < attemptCookies.length; ai++) {
         try {
-            var res2 = fetch(API_BASE + "/chapters/" + chapterId, {
-                headers: makeHeaders(cookie)
+            var res = fetch(API_BASE + "/auth/reader-bootstrap", {
+                method: "POST",
+                headers: makeHeaders(attemptCookies[ai]),
+                body: JSON.stringify({})
             });
-            if (res2 && res2.ok) return res2.json();
+            if (res && res.ok) {
+                var j = res.json();
+                if (j) {
+                    var tok = j.token || j.bootstrapToken || j.t || j.key || "";
+                    if (tok) return String(tok);
+                }
+            }
+        } catch (_) {}
+    }
+    return "";
+}
+
+function fetchChapterMeta(chapterId, cookie, bootstrapToken) {
+    var extra = {};
+    if (bootstrapToken) extra["X-Reader-Bootstrap"] = bootstrapToken;
+    var cookieAttempts = [null, cookie || ""];
+    for (var ai = 0; ai < cookieAttempts.length; ai++) {
+        try {
+            var res = fetch(API_BASE + "/chapters/" + chapterId, {
+                headers: makeHeaders(cookieAttempts[ai], extra)
+            });
+            if (res && res.ok) return res.json();
         } catch (_) {}
     }
     return null;
 }
+
 
 function registerReaderDevice(cookie, publicKeyB64) {
     try {
@@ -348,41 +361,32 @@ function registerReaderDevice(cookie, publicKeyB64) {
     } catch (_) { return null; }
 }
 
-function readerBootstrap(cookie) {
-    try {
-        var res = fetch(API_BASE + "/auth/reader-bootstrap", {
-            method: "POST",
-            headers: makeHeaders(cookie),
-            body: JSON.stringify({})
-        });
-        if (res && res.ok) return res.json();
-        return null;
-    } catch (_) { return null; }
-}
 
-function openSegment(chapterId, contentSession, deviceKeyId, privateKey, segmentIndex, cookie, clientCounter) {
+function openSegment(chapterId, contentSession, deviceKeyId, privateKey, segmentIndex, cookie, clientCounter, bootstrapToken) {
     try {
         var ua = UserAgent.chrome();
         var uaHash = sha256Hex(ua);
         var deviceProof = sha256Hex(ua + "|vi-VN|UTC").substring(0, 32);
         var issuedAt = String(new Date().getTime());
         var sessionId = (contentSession && contentSession.sessionId) ? String(contentSession.sessionId) : "";
+        var proofNonce = (contentSession && contentSession.proofNonce) ? String(contentSession.proofNonce) : "";
+        var manifestMac = (contentSession && contentSession.manifestMac) ? String(contentSession.manifestMac) : "";
         var counter   = clientCounter != null ? String(clientCounter) : "0";
         var segIdx    = segmentIndex != null ? String(segmentIndex) : "0";
-        var payload = [sessionId, chapterId, segIdx, counter, deviceKeyId, issuedAt].join(":");
-        var sessionProof = sha256Hex([sessionId, chapterId, segIdx].join(":"));
-        var signature = privateKey ? rsaSign(privateKey, payload) : "";
+        var sessionProof = sha256Hex(proofNonce + sessionId + manifestMac);
+        var payload = [sessionId, chapterId, segIdx, counter, deviceKeyId || "", issuedAt].join(":");
+        var signature = (privateKey && deviceKeyId) ? rsaSign(privateKey, payload) : "";
         var body = {
             sessionId: sessionId,
             targetSegment: parseInt(segIdx, 10),
             deviceProof: deviceProof,
             uaHash: uaHash,
-            clientCounter: parseInt(counter, 10)
+            clientCounter: parseInt(counter, 10),
+            sessionProof: sessionProof
         };
         if (deviceKeyId) {
             body.readerDeviceId = deviceKeyId;
             body.readerDeviceIssuedAt = parseInt(issuedAt, 10);
-            body.sessionProof = sessionProof;
         }
         if (signature) {
             body.readerDeviceSignature = signature;
@@ -392,6 +396,7 @@ function openSegment(chapterId, contentSession, deviceKeyId, privateKey, segment
             "X-Reader-Layout-Profile": "default",
             "X-Reader-Layout-Width": "800"
         };
+        if (bootstrapToken) extraH["X-Reader-Bootstrap"] = bootstrapToken;
         var res = fetch(API_BASE + "/chapters/" + chapterId + "/segment/open", {
             method: "POST",
             headers: makeHeaders(null, extraH),
@@ -598,7 +603,10 @@ function execute(url) {
         log("hasSid=" + (hasSidCookie(cookie) ? "1" : "0"));
         log("hasCf=" + (/cf_clearance/.test(cookie || "") ? "1" : "0"));
 
-        var apiJson = fetchChapterMeta(chapterId, cookie);
+        var bootstrapToken = readerBootstrap(cookie);
+        log("bootstrap=" + (bootstrapToken ? bootstrapToken.substring(0,8) : "none"));
+
+        var apiJson = fetchChapterMeta(chapterId, cookie, bootstrapToken);
         log("chapApiOk=" + (apiJson ? "1" : "0"));
 
         if (apiJson) {
@@ -674,7 +682,7 @@ function execute(url) {
                         log("deviceKeyId2=" + (deviceKeyId ? deviceKeyId.substring(0, 12) : "none"));
                     }
 
-                    var segResult = openSegment(chapterId, contentSession, deviceKeyId, keyPair.privateKey, 0, cookie, 0);
+                    var segResult = openSegment(chapterId, contentSession, deviceKeyId, keyPair ? keyPair.privateKey : null, 0, cookie, 0, bootstrapToken);
                     log("segResult=" + (segResult ? "1" : "0"));
 
                     if (segResult) {
@@ -691,7 +699,7 @@ function execute(url) {
                             var fullHtml = segContent;
                             for (var si = 1; si < Math.min(totalSegments, 20); si++) {
                                 try {
-                                    var nextSeg = openSegment(chapterId, contentSession, deviceKeyId, keyPair.privateKey, si, cookie, si);
+                                    var nextSeg = openSegment(chapterId, contentSession, deviceKeyId, keyPair ? keyPair.privateKey : null, si, cookie, si, bootstrapToken);
                                     if (!nextSeg) break;
                                     var nextContent = decryptSegment(nextSeg, segGrantSecret);
                                     if (nextContent) fullHtml += "\n" + nextContent;
