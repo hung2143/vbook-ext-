@@ -20,10 +20,10 @@
       "name": "Kho Truyện Chữ",
       "author": "Hung",
       "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/KhoTruyenChu/plugin.zip",
-      "version": 1,
-      "source": "https://khotruyenchu.sbs/",
+      "version": 3,
+      "source": "https://khotruyenchu.click/",
       "icon": "",
-      "description": "Đọc truyện trên trang https://khotruyenchu.sbs/",
+      "description": "Đọc truyện trên trang https://khotruyenchu.click/",
       "type": "novel",
       "locale": "vn_VI"
     }
