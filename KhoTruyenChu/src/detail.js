@@ -2,7 +2,7 @@ function execute(url) {
     var response = fetch(url, {
         headers: {
             "user-agent": UserAgent.chrome(),
-            "referer": "https://khotruyenchu.sbs/"
+            "referer": "https://khotruyenchu.click/"
         }
     });
     if (!response.ok) return null;
@@ -17,7 +17,7 @@ function execute(url) {
     function normalizeUrl(link) {
         if (!link) return "";
         if (link.startsWith("//")) return "https:" + link;
-        if (!link.startsWith("http")) return "https://khotruyenchu.sbs" + link;
+        if (!link.startsWith("http")) return "https://khotruyenchu.click" + link;
         return link;
     }
 
@@ -167,6 +167,6 @@ function execute(url) {
         description: desc || title,
         detail: info,
         ongoing: status ? !/hoàn|hoan\s*thanh|đã\s*xong|da\s*xong/i.test(status) : true,
-        host: "https://khotruyenchu.sbs"
+        host: "https://khotruyenchu.click"
     });
 }

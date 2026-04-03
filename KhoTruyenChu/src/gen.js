@@ -4,7 +4,7 @@ function execute(url, page) {
         var pageNum = parseInt(page, 10);
         if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
 
-        // Expect input dạng https://khotruyenchu.sbs/page/ hoặc .../top-qidian/page/
+        // Expect input dạng https://khotruyenchu.click/page/ hoặc .../top-qidian/page/
         // Trang 1 dùng root (không có /page/1/), các trang sau ghép /page/{n}/.
         var base = url;
         if (!base.endsWith("/")) base += "/";
@@ -13,7 +13,7 @@ function execute(url, page) {
         var response = fetch(listUrl, {
             headers: {
                 "user-agent": UserAgent.chrome(),
-                "referer": "https://khotruyenchu.sbs/"
+                "referer": "https://khotruyenchu.click/"
             }
         });
         if (!response.ok) {
@@ -22,7 +22,7 @@ function execute(url, page) {
                 link: listUrl,
                 cover: "",
                 description: "HTTP " + response.status,
-                host: "https://khotruyenchu.sbs"
+                host: "https://khotruyenchu.click"
             }], null);
         }
 
@@ -33,7 +33,7 @@ function execute(url, page) {
                 link: listUrl,
                 cover: "",
                 description: "Không parse được HTML",
-                host: "https://khotruyenchu.sbs"
+                host: "https://khotruyenchu.click"
             }], null);
         }
 
@@ -43,7 +43,7 @@ function execute(url, page) {
         function normalizeUrl(link) {
             if (!link) return "";
             if (link.startsWith("//")) return "https:" + link;
-            if (!link.startsWith("http")) return "https://khotruyenchu.sbs" + link;
+            if (!link.startsWith("http")) return "https://khotruyenchu.click" + link;
             return link;
         }
 
@@ -102,7 +102,7 @@ function execute(url, page) {
                 link: link,
                 cover: cover || "",
                 description: desc || "",
-                host: "https://khotruyenchu.sbs"
+                host: "https://khotruyenchu.click"
             });
         }
 
@@ -139,44 +139,16 @@ function execute(url, page) {
             }
         }
 
-        // Enrich ảnh/mô tả trực tiếp từ trang truyện nếu card list chưa có.
-        var enrichLimit = Math.min(data.length, 30);
-        for (var j = 0; j < enrichLimit; j++) {
-            if (data[j].cover && data[j].description) continue;
-            try {
-                var r2 = fetch(data[j].link, {
-                    headers: {
-                        "user-agent": UserAgent.chrome(),
-                        "referer": listUrl
-                    }
-                });
-                if (!r2.ok) continue;
-                var d2 = r2.html("utf-8");
-                if (!data[j].cover) {
-                    var c = d2.select("meta[property='og:image']").attr("content");
-                    if (!c) c = d2.select("meta[name='twitter:image']").attr("content");
-                    if (!c) c = extractCoverFromNode(d2.select(".entry-content, article, .post, body").first());
-                    data[j].cover = normalizeUrl(c || "");
-                }
-                if (!data[j].description) {
-                    var de = d2.select("meta[name='description']").attr("content");
-                    if (!de) {
-                        var p2 = d2.select(".entry-content p, article p, p").first();
-                        if (p2) de = p2.text();
-                    }
-                    data[j].description = de || "";
-                }
-            } catch (ignore) {}
-        }
+        // Bỏ bước enrich theo từng truyện để giảm số request, giúp app mở list nhanh hơn.
 
         // Fallback regex nếu selector không tìm thấy gì.
         if (data.length === 0) {
             var html = doc.html();
-            var regex = /(https:\/\/khotruyenchu\.sbs\/truyen\/[^"'>\s]+|\/truyen\/[^"'>\s]+)/g;
+            var regex = /(https:\/\/khotruyenchu\.click\/truyen\/[^"'>\s]+|\/truyen\/[^"'>\s]+)/g;
             var m;
             while ((m = regex.exec(html)) !== null) {
                 var link2 = m[0];
-                if (!link2.startsWith('http')) link2 = 'https://khotruyenchu.sbs' + link2;
+                if (!link2.startsWith('http')) link2 = 'https://khotruyenchu.click' + link2;
                 if (seen[link2]) continue;
                 seen[link2] = true;
                 var slug2 = link2.split('/').filter(Boolean).pop();
@@ -186,7 +158,7 @@ function execute(url, page) {
                     link: link2,
                     cover: "",
                     description: "",
-                    host: "https://khotruyenchu.sbs"
+                    host: "https://khotruyenchu.click"
                 });
             }
         }
@@ -208,7 +180,7 @@ function execute(url, page) {
                 link: listUrl,
                 cover: "",
                 description: "HTML length: " + (doc.html() ? doc.html().length : 0),
-                host: "https://khotruyenchu.sbs"
+                host: "https://khotruyenchu.click"
             });
         }
 
@@ -219,7 +191,7 @@ function execute(url, page) {
             link: url,
             cover: "",
             description: e.toString(),
-            host: "https://khotruyenchu.sbs"
+            host: "https://khotruyenchu.click"
         }], null);
     }
 }

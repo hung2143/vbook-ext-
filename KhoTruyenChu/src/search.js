@@ -3,13 +3,13 @@ function execute(key, page) {
     var pageNum = parseInt(page, 10);
     if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
 
-    var searchUrl = "https://khotruyenchu.sbs/?s=" + encodeURIComponent(key);
+    var searchUrl = "https://khotruyenchu.click/?s=" + encodeURIComponent(key);
     if (pageNum > 1) searchUrl += "&paged=" + pageNum;
 
     var response = fetch(searchUrl, {
         headers: {
             "user-agent": UserAgent.chrome(),
-            "referer": "https://khotruyenchu.sbs/"
+            "referer": "https://khotruyenchu.click/"
         }
     });
     if (!response.ok) return null;
@@ -21,7 +21,7 @@ function execute(key, page) {
     function normalizeUrl(link) {
         if (!link) return "";
         if (link.startsWith("//")) return "https:" + link;
-        if (!link.startsWith("http")) return "https://khotruyenchu.sbs" + link;
+        if (!link.startsWith("http")) return "https://khotruyenchu.click" + link;
         return link;
     }
 
@@ -80,7 +80,7 @@ function execute(key, page) {
             link: link,
             cover: cover || "",
             description: desc || "",
-            host: "https://khotruyenchu.sbs"
+            host: "https://khotruyenchu.click"
         });
     }
 
@@ -112,34 +112,7 @@ function execute(key, page) {
         }
     }
 
-    var enrichLimit = Math.min(data.length, 30);
-    for (var j = 0; j < enrichLimit; j++) {
-        if (data[j].cover && data[j].description) continue;
-        try {
-            var r2 = fetch(data[j].link, {
-                headers: {
-                    "user-agent": UserAgent.chrome(),
-                    "referer": searchUrl
-                }
-            });
-            if (!r2.ok) continue;
-            var d2 = r2.html("utf-8");
-            if (!data[j].cover) {
-                var c = d2.select("meta[property='og:image']").attr("content");
-                if (!c) c = d2.select("meta[name='twitter:image']").attr("content");
-                if (!c) c = extractCoverFromNode(d2.select(".entry-content, article, .post, body").first());
-                data[j].cover = normalizeUrl(c || "");
-            }
-            if (!data[j].description) {
-                var de = d2.select("meta[name='description']").attr("content");
-                if (!de) {
-                    var p2 = d2.select(".entry-content p, article p, p").first();
-                    if (p2) de = p2.text();
-                }
-                data[j].description = de || "";
-            }
-        } catch (ignore) {}
-    }
+    // Bỏ bước enrich theo từng truyện để tối ưu tốc độ trả kết quả tìm kiếm.
 
     var next = null;
     var expectedNext = "&paged=" + (pageNum + 1);

@@ -1,8 +1,8 @@
 function cleanHtml(html) {
     if (!html) return "";
     // Loại bỏ cảnh báo sao chép và phần comment/bảng quảng cáo đơn giản.
-    html = html.replace(/Cảnh\s*báo[^<]{0,120}khotruyenchu\.sbs/gi, "");
-    html = html.replace(/Đọc\s*bản\s*dịch[^<]{0,120}khotruyenchu\.sbs/gi, "");
+    html = html.replace(/Cảnh\s*báo[^<]{0,120}khotruyenchu\.(?:sbs|click)/gi, "");
+    html = html.replace(/Đọc\s*bản\s*dịch[^<]{0,120}khotruyenchu\.(?:sbs|click)/gi, "");
 
     // Loại bỏ các khối điều hướng/chỉnh giao diện trong trang chương.
     html = html.replace(/<a[^>]*>\s*[≣\s]*Mục\s*lục\s*<\/a>/gi, "");
@@ -32,7 +32,7 @@ function execute(url) {
     var response = fetch(url, {
         headers: {
             "user-agent": UserAgent.chrome(),
-            "referer": "https://khotruyenchu.sbs/"
+            "referer": "https://khotruyenchu.click/"
         }
     });
     if (!response.ok) return null;

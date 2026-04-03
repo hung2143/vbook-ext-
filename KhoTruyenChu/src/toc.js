@@ -149,7 +149,7 @@ function detectLastPage(doc) {
 }
 
 function execute(url) {
-    var host = "https://khotruyenchu.sbs";
+    var host = "https://khotruyenchu.click";
     var base = url;
     if (!base.endsWith('/')) base += '/';
     base = base.replace(/\/page\/\d+\/$/, '');
@@ -186,8 +186,9 @@ function execute(url) {
     var lastPage = detectLastPage(doc);
 
     if (lastPage <= 1) {
-        // Fallback nếu paginator không hiện đủ: quét dần đến khi hết chương.
-        for (var f = 2; f <= 2000; f++) {
+        // Fallback nếu paginator không hiện đủ: quét có giới hạn để tránh load quá lâu khi nhúng app.
+        var emptyStreak = 0;
+        for (var f = 2; f <= 120; f++) {
             var fallbackPageUrl = base + "page/" + f + "/";
             var fr = fetch(fallbackPageUrl, {
                 headers: {
@@ -198,7 +199,12 @@ function execute(url) {
             if (!fr.ok) break;
             var fd = fr.html("utf-8");
             var fAdded = collectChapters(fd, data, seen, host);
-            if (fAdded === 0) break;
+            if (fAdded === 0) {
+                emptyStreak++;
+                if (emptyStreak >= 2) break;
+            } else {
+                emptyStreak = 0;
+            }
         }
         return Response.success(data);
     }
