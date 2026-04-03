@@ -2,7 +2,7 @@
   "metadata": {
     "name": "Trang Truyện",
     "author": "Hung",
-    "version": 33,
+    "version": 34,
     "source": "https://trangtruyen.site/",
     "regexp": "(www\\.)?trangtruyen\\.site/(stories/[^/?#]+/?|read/[^/?#]+/?)(\\?.*)?$",
     "description": "Đọc truyện trên trang https://trangtruyen.site/",

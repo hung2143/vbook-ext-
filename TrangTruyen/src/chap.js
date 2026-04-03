@@ -1,20 +1,34 @@
 // ============================================================
-// TrangTruyen - chap.js (v3 - RSA Device Binding Bypass)
+// TrangTruyen - chap.js (v4 - Cookie Injection + RSA Bypass)
 // Lấy nội dung chương từ trangtruyen.site
 //
-// Site dùng hệ thống bảo mật RSA Device Binding:
-//   1. reader-bootstrap → contentSession
-//   2. reader-device/register → RSA key → deviceKeyId
-//   3. chapters/:id → meta + contentSession
-//   4. chapters/:id/segment/open → RSA-signed → nội dung mã hoá
-//   5. Web Worker giải mã AES-GCM
+// CÁCH DÙNG (nếu bị đá logout):
+//   1. Mở Chrome trên PC → vào trangtruyen.site → đăng nhập
+//   2. Mở DevTools (F12) → Application → Cookies → trangtruyen.site
+//   3. Copy giá trị của cookie "trangtruyen.sid" (và "cf_clearance" nếu có)
+//   4. Trong vBook: giữ plugin → Mã bổ sung → nhập:
+//        let TRANGTRUYEN_COOKIE = "trangtruyen.sid=GIÁ_TRỊ_Ở_ĐÂY";
+//   5. Nhấn OK → mở chương truyện
 //
-// Phương án: Dùng Engine.newBrowser() với credentials=include
-// để trang web tự xử lý RSA + decrypt, sau đó lấy DOM
+// Nếu có cả cf_clearance:
+//        let TRANGTRUYEN_COOKIE = "trangtruyen.sid=ABC; cf_clearance=XYZ";
 // ============================================================
 
 var BASE_URL = "https://trangtruyen.site";
 var API_BASE  = BASE_URL + "/api";
+
+var ERROR_COOKIE_GUIDE = [
+    "Session bị đá ra ngoài do trang phát hiện plugin.",
+    "",
+    "Cách fix: Nhập cookie thủ công qua \"Mã bổ sung\":",
+    "1. Mở Chrome (PC) → vào trangtruyen.site → đăng nhập",
+    "2. Nhấn F12 → Application → Cookies → trangtruyen.site",
+    "3. Copy giá trị 'trangtruyen.sid'",
+    "4. Giữ plugin trong vBook → Mã bổ sung → nhập:",
+    "   let TRANGTRUYEN_COOKIE = \"trangtruyen.sid=GIÁ_TRỊ\"",
+    "5. OK → thử lại"
+].join("\n");
+
 var ERROR_LOGIN = "Vui lòng vào trang nguồn " + BASE_URL + ", đăng nhập, rồi quay lại nhấn Tải lại.";
 
 // ---- Utilities ----
@@ -198,11 +212,33 @@ function aesGcmDecryptWithIvPrefix(rawBytes_b64, keyHex) {
 
 // ---- Get Cookie ----
 
+// Đọc cookie được inject thủ công qua "Mã bổ sung"
+// Biến TRANGTRUYEN_COOKIE được set bởi người dùng trong vBook
+function getManualCookie() {
+    try {
+        // Biến này được inject từ "Mã bổ sung" của vBook
+        // Dạng: let TRANGTRUYEN_COOKIE = "trangtruyen.sid=abc; cf_clearance=xyz";
+        if (typeof TRANGTRUYEN_COOKIE !== "undefined" &&
+            TRANGTRUYEN_COOKIE &&
+            String(TRANGTRUYEN_COOKIE).length > 10) {
+            return String(TRANGTRUYEN_COOKIE).trim();
+        }
+    } catch (_) {}
+    return "";
+}
+
 function getSiteCookie(url) {
+    // Ưu tiên 1: Cookie nhập thủ công qua "Mã bổ sung"
+    var manual = getManualCookie();
+    if (manual) return manual;
+
+    // Ưu tiên 2: localCookie API của vBook
     try {
         var c = localCookie.getCookie();
         if (c && c.length > 5) return String(c);
     } catch (_) {}
+
+    // Ưu tiên 3: Cookie từ request header
     try {
         var res = fetch(BASE_URL + "/", {
             headers: { "User-Agent": UserAgent.chrome() }
@@ -213,7 +249,13 @@ function getSiteCookie(url) {
             if (ck && ck.length > 5) return String(ck);
         }
     } catch (_) {}
+
     return "";
+}
+
+// Kiểm tra cookie có chứa session hợp lệ không
+function hasSidCookie(cookie) {
+    return cookie && /trangtruyen\.sid/.test(cookie);
 }
 
 // ---- API Calls ----
@@ -521,9 +563,12 @@ function execute(url) {
         log("chapId=" + chapterId.substring(0, 12));
 
         // Lấy cookie để xác thực
-        var cookie = getSiteCookie(url);
+        var manualCk = getManualCookie();
+        var cookie = manualCk || getSiteCookie(url);
+        log("manualCk=" + (manualCk ? "1" : "0"));
         log("hasCookie=" + (cookie ? "1" : "0"));
         log("cookieLen=" + (cookie || "").length);
+        log("hasSid=" + (hasSidCookie(cookie) ? "1" : "0"));
 
         // ========================
         // Bước 1: Lấy chapter meta
@@ -643,15 +688,11 @@ function execute(url) {
         }
 
         // ========================
-        // Bước 4: Browser render (phương án chính nếu API không được)
-        // Đây là phương án đáng tin cậy nhất vì trang web tự xử lý RSA + decrypt
+        // Bước 4: Browser render (ĐÃ BỎ vì bị detect)
+        // - Site phát hiện WebView của app và kill session
+        // - Dùng cookie thủ công từ "Mã bổ sung" thay thế
         // ========================
-        log("tryBrowser=1");
-        var browserResult = tryBrowserRender(url, cookie);
-        log("browserLen=" + (browserResult || "").length);
-        if (browserResult && browserResult.length > 50) {
-            return Response.success(browserResult);
-        }
+        // log("tryBrowser=skip");
 
         // ========================
         // Bước 5: HTML fetch thuần (cho chương miễn phí không JS)
@@ -663,26 +704,32 @@ function execute(url) {
             return Response.success(htmlResult);
         }
 
-        // Kiểm tra nếu chưa đăng nhập
-        if (!cookie || cookie.length < 10) {
-            return Response.error(ERROR_LOGIN + "\n[Chưa đăng nhập - DBG: " + dbg.join("|") + "]");
+        // ========================
+        // Error: Hướng dẫn dùng cookie thủ công
+        // ========================
+        var dbgStr = "[DBG: " + dbg.join(" | ") + "]";
+
+        if (!hasSidCookie(cookie)) {
+            // Chưa có cookie hoặc cookie không có session
+            return Response.error(
+                ERROR_COOKIE_GUIDE + "\n\n" + dbgStr
+            );
         }
 
+        // Có cookie nhưng vẫn không lấy được → session bị kill
         return Response.error(
-            "Không lấy được nội dung chương.\n" +
-            "Có thể do:\n" +
-            "1. Trang đã thay đổi API\n" +
-            "2. Session đã hết hạn → thử đăng nhập lại\n" +
-            "3. Chương yêu cầu quyền cao hơn\n\n" +
-            ERROR_LOGIN +
-            "\n[DBG: " + dbg.join(" | ") + "]"
+            "Session bị trang phát hiện và vô hiệu hoá.\n\n" +
+            ERROR_COOKIE_GUIDE + "\n\n" +
+            "Lưu ý: Lấy cookie khi đang đăng nhập trên Chrome PC,\n" +
+            "KHÔNG dùng cookie từ app vBook (sẽ bị detect).\n\n" +
+            dbgStr
         );
 
     } catch (e) {
         return Response.error(
-            ERROR_LOGIN +
-            "\n[Exception: " + String((e && e.message) || e) +
-            " | DBG: " + dbg.join("|") + "]"
+            "Lỗi không mong đợi: " + String((e && e.message) || e) + "\n\n" +
+            ERROR_COOKIE_GUIDE +
+            "\n[DBG: " + dbg.join("|") + "]"
         );
     }
 }
