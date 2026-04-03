@@ -21,7 +21,7 @@ function extractChapterId(url) {
 }
 
 function isLoginRequired(text) {
-    return /đăng nhập|yêu cầu đăng|cần đăng nhập|login required|sign in|unauthorized/i.test(text || "");
+    return /đăng nhập|yêu cầu đăng|cần đăng nhập|login required|sign in|unauthorized|chưa được đăng ký|Trình đọc hiện tại|đăng ký ngay|chưa đăng ký/i.test(text || "");
 }
 
 function isGoodContent(text) {
@@ -472,45 +472,42 @@ function tryBrowserRender(url) {
     var browser = null;
     try {
         browser = Engine.newBrowser();
-        browser.launch(url, 25000);
+        browser.launch(url, 45000);
 
         var extractScript = "(function(){" +
-            "var sels=['.chapter-content','#chapter-content','.reader-content'," +
-            "'.chapter-body','.content-render','[class*=\"chapter-text\"]','[class*=\"chapter-content\"]'," +
-            "'[class*=\"reader\"]','article','main'];" +
+            "var BAD=/Trang Truy\u1ec7n|Th\u1ec3 lo\u1ea1i|Trang ch\u1ee7|ch\u01b0a \u0111\u01b0\u1ee3c \u0111\u0103ng k\u00fd|Tr\u00ecnh \u0111\u1ecdc hi\u1ec7n|\u0111\u0103ng nh\u1eadp|login|\u0111\u0103ng k\u00fd ngay/i;" +
+            "function isParagraph(t){return t.length>30&&!BAD.test(t);}" +
+            "var sels=['[class*=chapter-content]','[class*=chapter-body]','[class*=reader-content]'," +
+            "  '[class*=content-render]','.chapter-content','#chapter-content'," +
+            "  '.reader-content','.chapter-body'];" +
             "for(var i=0;i<sels.length;i++){" +
             "  try{var n=document.querySelector(sels[i]);if(!n)continue;" +
-            "  var ps=n.querySelectorAll('p');var html='';var txt='';" +
-            "  for(var j=0;j<ps.length;j++){var t=(ps[j].innerText||'').replace(/[\\u200B-\\u200F\\u202A-\\u202E\\u2060\\uFEFF]/g,'').trim();" +
-            "    if(t.length>5){html+='<p>'+t+'</p>';txt+=t+' ';}}" +
-            "  if(txt.length>200&&!/đăng nhập|login|yêu cầu|401|403/i.test(txt))return html;" +
-            "  }catch(_){}" +
-            "}" +
-            "return '';})()";
+            "  var ps=n.querySelectorAll('p');var html='';var cnt=0;" +
+            "  for(var j=0;j<ps.length;j++){" +
+            "    var t=(ps[j].innerText||'').replace(/[\\u200B-\\u200F\\u202A-\\u202E\\u2060\\uFEFF]/g,'').trim();" +
+            "    if(isParagraph(t)){html+='<p>'+t+'</p>';cnt++;}}" +
+            "  if(cnt>=2&&html.length>100)return html;" +
+            "  }catch(_){}}" +
+            "var allP=document.querySelectorAll('p');var html2='';var cnt2=0;" +
+            "for(var i=0;i<allP.length;i++){" +
+            "  var t=(allP[i].innerText||'').replace(/[\\u200B-\\u200F\\u202A-\\u202E\\u2060\\uFEFF]/g,'').trim();" +
+            "  if(isParagraph(t)){html2+='<p>'+t+'</p>';cnt2++;}}" +
+            "return cnt2>=3?html2:'';" +
+            "})()";
 
         var result = "";
-        try {
-            var r = browser.callJs(extractScript, 8000);
-            if (r) {
-                var s = String(r.text ? r.text() : r).trim();
-                if (s && s.length > 100 && !isLoginRequired(s)) result = s;
-            }
-        } catch (_) {}
-
-        if (!result) {
+        var attempts = [10000, 20000];
+        for (var ai = 0; ai < attempts.length && !result; ai++) {
             try {
-                var doc = browser.html();
-                if (doc) {
-                    var sels2 = [".chapter-content", "#chapter-content", ".reader-content", ".chapter-body", "article"];
-                    for (var i = 0; i < sels2.length && !result; i++) {
-                        try {
-                            var node = doc.select(sels2[i]).first();
-                            if (!node) continue;
-                            var nh = cleanContent(node.html() || "");
-                            var nt = htmlToText(nh);
-                            if (isGoodContent(nt)) result = nh;
-                        } catch (_) {}
-                    }
+                var wait = attempts[ai];
+                var __start = new Date().getTime();
+                while (new Date().getTime() - __start < wait) {}
+            } catch (_) {}
+            try {
+                var r = browser.callJs(extractScript, 10000);
+                if (r) {
+                    var s = String(r.text ? r.text() : r).trim();
+                    if (s && s.length > 100 && !isLoginRequired(s)) result = s;
                 }
             } catch (_) {}
         }
@@ -530,6 +527,7 @@ function tryBrowserRender(url) {
     }
     return "";
 }
+
 
 function execute(url) {
     var dbg = [];
