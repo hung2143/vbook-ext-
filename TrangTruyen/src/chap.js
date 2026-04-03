@@ -468,6 +468,69 @@ function tryHtmlFetch(url, cookie) {
     return "";
 }
 
+function tryBrowserRender(url) {
+    var browser = null;
+    try {
+        browser = Engine.newBrowser();
+        browser.launch(url, 25000);
+
+        var extractScript = "(function(){" +
+            "var sels=['.chapter-content','#chapter-content','.reader-content'," +
+            "'.chapter-body','.content-render','[class*=\"chapter-text\"]','[class*=\"chapter-content\"]'," +
+            "'[class*=\"reader\"]','article','main'];" +
+            "for(var i=0;i<sels.length;i++){" +
+            "  try{var n=document.querySelector(sels[i]);if(!n)continue;" +
+            "  var ps=n.querySelectorAll('p');var html='';var txt='';" +
+            "  for(var j=0;j<ps.length;j++){var t=(ps[j].innerText||'').replace(/[\\u200B-\\u200F\\u202A-\\u202E\\u2060\\uFEFF]/g,'').trim();" +
+            "    if(t.length>5){html+='<p>'+t+'</p>';txt+=t+' ';}}" +
+            "  if(txt.length>200&&!/đăng nhập|login|yêu cầu|401|403/i.test(txt))return html;" +
+            "  }catch(_){}" +
+            "}" +
+            "return '';})()";
+
+        var result = "";
+        try {
+            var r = browser.callJs(extractScript, 8000);
+            if (r) {
+                var s = String(r.text ? r.text() : r).trim();
+                if (s && s.length > 100 && !isLoginRequired(s)) result = s;
+            }
+        } catch (_) {}
+
+        if (!result) {
+            try {
+                var doc = browser.html();
+                if (doc) {
+                    var sels2 = [".chapter-content", "#chapter-content", ".reader-content", ".chapter-body", "article"];
+                    for (var i = 0; i < sels2.length && !result; i++) {
+                        try {
+                            var node = doc.select(sels2[i]).first();
+                            if (!node) continue;
+                            var nh = cleanContent(node.html() || "");
+                            var nt = htmlToText(nh);
+                            if (isGoodContent(nt)) result = nh;
+                        } catch (_) {}
+                    }
+                }
+            } catch (_) {}
+        }
+
+        try { browser.close(); } catch (_) {}
+
+        if (result) {
+            var cleaned = cleanContent(result);
+            var text = htmlToText(cleaned);
+            if (isGoodContent(text)) {
+                if (/<p[\s>]|<br/.test(cleaned)) return cleaned;
+                return plainTextToHtml(text);
+            }
+        }
+    } catch (_) {
+        try { if (browser) browser.close(); } catch (__) {}
+    }
+    return "";
+}
+
 function execute(url) {
     var dbg = [];
     function log(s) { try { dbg.push(String(s)); } catch (_) {} }
@@ -597,15 +660,20 @@ function execute(url) {
             return Response.success(htmlResult);
         }
 
-        var dbgStr = "[DBG: " + dbg.join(" | ") + "]";
-
-        if (!hasSidCookie(cookie)) {
-            return Response.error(ERROR_COOKIE_GUIDE + "\n\n" + dbgStr);
+        log("tryBrowser=1");
+        var browserResult = tryBrowserRender(url);
+        log("browserLen=" + (browserResult || "").length);
+        if (browserResult && browserResult.length > 50) {
+            return Response.success(browserResult);
         }
 
+        var dbgStr = "[DBG: " + dbg.join(" | ") + "]";
+
         return Response.error(
-            "Session bị trang phát hiện và vô hiệu hoá.\n\n" +
-            ERROR_COOKIE_GUIDE + "\n\n" +
+            "Không thể tải nội dung chương.\n\n" +
+            "Thử:\n" +
+            "1. Đảm bảo đã đăng nhập trong vBook browser\n" +
+            "2. Nhấn Tải lại\n\n" +
             dbgStr
         );
 
