@@ -135,7 +135,6 @@ function sha256Hex(input) {
     try { return sha256HexJS(String(input || "")); } catch (_) { return ""; }
 }
 
-
 var _rsaKeyCache = null;
 function generateRsaKeyPair() {
     if (_rsaKeyCache) return _rsaKeyCache;
@@ -308,7 +307,7 @@ function makeHeaders(cookie, extra) {
 }
 
 function readerBootstrap(cookie) {
-    var attemptCookies = [null, cookie || ""];
+    var attemptCookies = [cookie || "", null];
     for (var ai = 0; ai < attemptCookies.length; ai++) {
         try {
             var res = fetch(API_BASE + "/auth/reader-bootstrap", {
@@ -319,8 +318,12 @@ function readerBootstrap(cookie) {
             if (res && res.ok) {
                 var j = res.json();
                 if (j) {
-                    var tok = j.token || j.bootstrapToken || j.t || j.key || "";
+                    var tok = j.token || j.bootstrapToken || j.t || j.key || j.readerToken || "";
                     if (tok) return String(tok);
+                    // Trả về toàn bộ response để debug
+                    var keys = [];
+                    try { for (var k in j) keys.push(k); } catch(_) {}
+                    if (keys.length > 0) return "keys:" + keys.join(",");
                 }
             }
         } catch (_) {}
@@ -330,8 +333,10 @@ function readerBootstrap(cookie) {
 
 function fetchChapterMeta(chapterId, cookie, bootstrapToken) {
     var extra = {};
-    if (bootstrapToken) extra["X-Reader-Bootstrap"] = bootstrapToken;
-    var cookieAttempts = [null, cookie || ""];
+    if (bootstrapToken && bootstrapToken.indexOf("keys:") !== 0) {
+        extra["X-Reader-Bootstrap"] = bootstrapToken;
+    }
+    var cookieAttempts = [cookie || "", null];
     for (var ai = 0; ai < cookieAttempts.length; ai++) {
         try {
             var res = fetch(API_BASE + "/chapters/" + chapterId, {
@@ -342,7 +347,6 @@ function fetchChapterMeta(chapterId, cookie, bootstrapToken) {
     }
     return null;
 }
-
 
 function registerReaderDevice(cookie, publicKeyB64) {
     try {
@@ -356,7 +360,6 @@ function registerReaderDevice(cookie, publicKeyB64) {
         return j && j.deviceKeyId ? String(j.deviceKeyId) : null;
     } catch (_) { return null; }
 }
-
 
 function openSegment(chapterId, contentSession, deviceKeyId, privateKey, segmentIndex, cookie, clientCounter, bootstrapToken) {
     try {
@@ -392,28 +395,28 @@ function openSegment(chapterId, contentSession, deviceKeyId, privateKey, segment
             "X-Reader-Layout-Profile": "default",
             "X-Reader-Layout-Width": "800"
         };
-        if (bootstrapToken) extraH["X-Reader-Bootstrap"] = bootstrapToken;
+        if (bootstrapToken && bootstrapToken.indexOf("keys:") !== 0) {
+            extraH["X-Reader-Bootstrap"] = bootstrapToken;
+        }
         var res = fetch(API_BASE + "/chapters/" + chapterId + "/segment/open", {
+            method: "POST",
+            headers: makeHeaders(cookie, extraH),
+            body: JSON.stringify(body)
+        });
+        if (res && res.ok) return res.json();
+        // Thử lại không cookie
+        var res2 = fetch(API_BASE + "/chapters/" + chapterId + "/segment/open", {
             method: "POST",
             headers: makeHeaders(null, extraH),
             body: JSON.stringify(body)
         });
-        if (res && res.ok) return res.json();
-        if (cookie) {
-            var res2 = fetch(API_BASE + "/chapters/" + chapterId + "/segment/open", {
-                method: "POST",
-                headers: makeHeaders(cookie, extraH),
-                body: JSON.stringify(body)
-            });
-            if (res2 && res2.ok) return res2.json();
-        }
+        if (res2 && res2.ok) return res2.json();
         return null;
     } catch (_) { return null; }
 }
 
 function decryptSegment(segJson, grantSecret) {
     if (!segJson) return "";
-
     // Direct paragraphs (Fortress-v2 plain text response)
     var paras = segJson.paragraphs || (segJson.segment && segJson.segment.paragraphs);
     if (paras && paras.length) {
@@ -424,7 +427,6 @@ function decryptSegment(segJson, grantSecret) {
         }
         return out.join("\n");
     }
-
     if (segJson.l2 && grantSecret) {
         try {
             var stage1Text = aesGcmDecryptWithIvPrefix(segJson.l2, grantSecret);
@@ -485,17 +487,6 @@ function callResolveApi(chapterId, grantId, cookie) {
             if (j && j.grantSecret) return String(j.grantSecret);
         }
     } catch (_) {}
-    try {
-        var res2 = fetch(API_BASE + "/chapters/" + chapterId + "/resolve", {
-            method: "POST",
-            headers: { "User-Agent": ua, "Content-Type": "application/json", "Cookie": cookie || "" },
-            body: JSON.stringify({ grantId: grantId })
-        });
-        if (res2 && res2.ok) {
-            var j2 = res2.json();
-            if (j2 && j2.grantSecret) return String(j2.grantSecret);
-        }
-    } catch (_) {}
     return "";
 }
 
@@ -521,290 +512,337 @@ function tryHtmlFetch(url, cookie) {
 }
 
 // ========================================================================================
-// PHƯƠNG PHÁP CHÍNH: Browser Intercept - Dùng WebView để trang web tự xác thực,
-// rồi intercept response từ /segment/open API
+// BROWSER APPROACH: Nhiều chiến lược trích xuất text từ browser rendering
 // ========================================================================================
 
-function buildInterceptScript() {
-    // JavaScript inject vào page để:
-    // 1. Hook fetch() để chặn response từ segment/open
-    // 2. Thu thập tất cả paragraphs từ các segment
-    // 3. Expose data qua window.__vbook_paragraphs
-    return "(function(){" +
-        "if(window.__vbook_hooked)return 'already_hooked';" +
-        "window.__vbook_hooked=true;" +
-        "window.__vbook_paragraphs=[];" +
-        "window.__vbook_segments={};" +
-        "window.__vbook_totalSegments=0;" +
-        "window.__vbook_loadedSegments=0;" +
-        "window.__vbook_ready=false;" +
-        "window.__vbook_errors=[];" +
-        "window.__vbook_rawResponses=[];" +
-        // Hook fetch
-        "var origFetch=window.fetch;" +
-        "window.fetch=function(){" +
-        "  var args=arguments;" +
-        "  var url=(typeof args[0]==='string')?args[0]:" +
-        "    (args[0]&&args[0].url?args[0].url:'');" +
-        "  return origFetch.apply(this,args).then(function(resp){" +
-        "    if(url.indexOf('/segment/open')!==-1&&resp.ok){" +
-        "      resp.clone().json().then(function(data){" +
-        "        try{" +
-        "          window.__vbook_rawResponses.push(JSON.stringify(data).substring(0,500));" +
-        // Trích xuất paragraphs
-        "          var paras=data.paragraphs||(data.segment&&data.segment.paragraphs)||null;" +
-        "          var segIdx=data.segmentIndex||data.targetSegment||(data.segment&&data.segment.index)||0;" +
-        "          var total=data.totalSegments||(data.segment&&data.segment.total)||0;" +
-        "          if(total>0)window.__vbook_totalSegments=Math.max(window.__vbook_totalSegments,total);" +
-        "          if(paras&&paras.length){" +
-        "            window.__vbook_segments[segIdx]=paras;" +
-        "            window.__vbook_loadedSegments++;" +
-        "            var all=[];" +
-        "            var keys=Object.keys(window.__vbook_segments).sort(function(a,b){return a-b;});" +
-        "            for(var k=0;k<keys.length;k++){" +
-        "              var sp=window.__vbook_segments[keys[k]];" +
-        "              for(var j=0;j<sp.length;j++)all.push(sp[j]);" +
-        "            }" +
-        "            window.__vbook_paragraphs=all;" +
-        "          }" +
-        // Nếu data chưa có paragraphs, thử các field khác
-        "          if(!paras){" +
-        "            if(data.content&&typeof data.content==='string'&&data.content.length>50){" +
-        "              window.__vbook_paragraphs.push(data.content);" +
-        "            }" +
-        "          }" +
-        "        }catch(e){window.__vbook_errors.push(String(e));}" +
-        "      }).catch(function(e){window.__vbook_errors.push('json:'+String(e));});" +
-        "    }" +
-        // Cũng intercept chapter API để biết total segments
-        "    if(url.indexOf('/api/chapters/')!==-1&&url.indexOf('/segment/')===-1&&resp.ok){" +
-        "      resp.clone().json().then(function(data){" +
-        "        try{" +
-        "          var cs=data.contentSession||{};" +
-        "          if(cs.segments&&cs.segments.length){" +
-        "            window.__vbook_totalSegments=cs.segments.length;" +
-        "          }" +
-        "        }catch(e){}" +
-        "      }).catch(function(e){});" +
-        "    }" +
-        "    return resp;" +
-        "  });" +
-        "};" +
-        // Cũng hook XMLHttpRequest
-        "var origXOpen=XMLHttpRequest.prototype.open;" +
-        "var origXSend=XMLHttpRequest.prototype.send;" +
-        "XMLHttpRequest.prototype.open=function(m,u){this.__vbUrl=u;return origXOpen.apply(this,arguments);};" +
-        "XMLHttpRequest.prototype.send=function(){" +
-        "  var xhr=this;" +
-        "  xhr.addEventListener('load',function(){" +
-        "    if(xhr.__vbUrl&&xhr.__vbUrl.indexOf('/segment/open')!==-1&&xhr.status===200){" +
-        "      try{" +
-        "        var d=JSON.parse(xhr.responseText);" +
-        "        var paras=d.paragraphs||(d.segment&&d.segment.paragraphs)||null;" +
-        "        var segIdx=d.segmentIndex||d.targetSegment||(d.segment&&d.segment.index)||0;" +
-        "        if(paras&&paras.length){" +
-        "          window.__vbook_segments[segIdx]=paras;" +
-        "          window.__vbook_loadedSegments++;" +
-        "          var all=[];" +
-        "          var keys=Object.keys(window.__vbook_segments).sort(function(a,b){return a-b;});" +
-        "          for(var k=0;k<keys.length;k++){" +
-        "            var sp=window.__vbook_segments[keys[k]];" +
-        "            for(var j=0;j<sp.length;j++)all.push(sp[j]);" +
-        "          }" +
-        "          window.__vbook_paragraphs=all;" +
-        "        }" +
-        "      }catch(e){}" +
-        "    }" +
-        "  });" +
-        "  return origXSend.apply(this,arguments);" +
-        "};" +
-        "return 'hooks_installed';" +
-        "})()";
+function busyWait(ms) {
+    var s = new Date().getTime();
+    while (new Date().getTime() - s < ms) {}
 }
 
-function buildScrollScript() {
-    // Script để tự động scroll toàn bộ trang → trigger tải tất cả segments
-    return "(function(){" +
-        "var totalH=Math.max(document.body.scrollHeight,document.documentElement.scrollHeight,5000);" +
-        "var step=300;" +
-        "var y=0;" +
-        "function doScroll(){" +
-        "  y+=step;" +
-        "  window.scrollTo(0,y);" +
-        "  if(y<totalH){setTimeout(doScroll,150);}" +
-        "  else{window.__vbook_scrollDone=true;}" +
-        "}" +
-        "doScroll();" +
-        "return 'scrolling_started';" +
-        "})()";
-}
-
-function buildResultScript() {
-    // Script để thu thập kết quả
-    return "(function(){" +
-        "return JSON.stringify({" +
-        "  paragraphs:window.__vbook_paragraphs||[]," +
-        "  totalSegments:window.__vbook_totalSegments||0," +
-        "  loadedSegments:window.__vbook_loadedSegments||0," +
-        "  errors:window.__vbook_errors||[]," +
-        "  rawCount:(window.__vbook_rawResponses||[]).length," +
-        "  rawSample:(window.__vbook_rawResponses||[])[0]||''," +
-        "  scrollDone:window.__vbook_scrollDone||false," +
-        "  hooked:window.__vbook_hooked||false" +
-        "});" +
-        "})()";
-}
-
-function tryBrowserIntercept(url) {
+function tryBrowserApproach(url, log) {
     var browser = null;
     try {
         browser = Engine.newBrowser();
         browser.launch(url, 60000);
+        log("brLaunched=1");
 
-        // Bước 1: Inject hooks ngay khi trang load
-        // Chờ trang load 3s
-        var __st1 = new Date().getTime();
-        while (new Date().getTime() - __st1 < 3000) {}
+        // Chờ page load + JS render hoàn tất
+        busyWait(12000);
 
+        // === TEST 1: Basic JS execution ===
+        var jsOk = false;
         try {
-            browser.callJs(buildInterceptScript(), 5000);
-        } catch (_) {}
-
-        // Bước 2: Chờ thêm 5s cho page JS chạy và tải segment đầu tiên
-        var __st2 = new Date().getTime();
-        while (new Date().getTime() - __st2 < 5000) {}
-
-        // Bước 3: Kiểm tra xem đã có data chưa
-        var earlyResult = "";
-        try {
-            var r = browser.callJs(buildResultScript(), 5000);
-            if (r) earlyResult = String(r.text ? r.text() : r).trim();
-        } catch (_) {}
-
-        var earlyData = safeJsonParse(earlyResult);
-        if (earlyData && earlyData.paragraphs && earlyData.paragraphs.length > 2) {
-            // Đã có đủ paragraphs, nhưng hãy scroll để lấy hết
+            var titleRes = browser.callJs("document.title", 3000);
+            var title = String(titleRes && titleRes.text ? titleRes.text() : titleRes || "");
+            log("brTitle=" + title.substring(0, 20));
+            jsOk = title.length > 0;
+        } catch (e) {
+            log("brTitleErr=" + String(e).substring(0, 30));
         }
 
-        // Bước 4: Scroll toàn bộ trang để trigger segment loading
-        try {
-            browser.callJs(buildScrollScript(), 5000);
-        } catch (_) {}
-
-        // Bước 5: Chờ scroll + segment loading hoàn tất
-        var __st3 = new Date().getTime();
-        while (new Date().getTime() - __st3 < 8000) {}
-
-        // Bước 6: Thu thập kết quả cuối cùng
-        var finalResult = "";
-        try {
-            var r2 = browser.callJs(buildResultScript(), 5000);
-            if (r2) finalResult = String(r2.text ? r2.text() : r2).trim();
-        } catch (_) {}
-
-        // Bước 7: Thử scroll thêm và chờ thêm nếu chưa đủ segments
-        var finalData = safeJsonParse(finalResult);
-        if (finalData && finalData.totalSegments > 0 && finalData.loadedSegments < finalData.totalSegments) {
-            // Scroll thêm một lần nữa
-            try {
-                browser.callJs("window.scrollTo(0,document.body.scrollHeight)", 3000);
-            } catch (_) {}
-            var __st4 = new Date().getTime();
-            while (new Date().getTime() - __st4 < 5000) {}
-            try {
-                var r3 = browser.callJs(buildResultScript(), 5000);
-                if (r3) finalResult = String(r3.text ? r3.text() : r3).trim();
-                finalData = safeJsonParse(finalResult);
-            } catch (_) {}
+        if (!jsOk) {
+            try { browser.close(); } catch (_) {}
+            return "";
         }
+
+        // === TEST 2: Lấy toàn bộ body text ===
+        var bodyText = "";
+        try {
+            var btRes = browser.callJs(
+                "(function(){try{return document.body.innerText||'';}catch(e){return 'err:'+e;}})()",
+                8000
+            );
+            bodyText = String(btRes && btRes.text ? btRes.text() : btRes || "");
+            log("bodyLen=" + bodyText.length);
+        } catch (e) {
+            log("bodyErr=" + String(e).substring(0, 30));
+        }
+
+        // Nếu body text có nội dung truyện → extract chỉ phần content
+        if (bodyText.length > 200) {
+            var extractedFromBody = extractStoryFromBodyText(bodyText);
+            if (extractedFromBody && extractedFromBody.length > 100) {
+                log("bodyExtract=" + extractedFromBody.length);
+                try { browser.close(); } catch (_) {}
+                return extractedFromBody;
+            }
+        }
+
+        // === TEST 3: Tìm content trong DOM bằng nhiều selectors ===
+        var domHtml = "";
+        try {
+            var domRes = browser.callJs(
+                "(function(){" +
+                "var sels=[" +
+                "'[class*=\"chapter-content\"]','[class*=\"chapter-body\"]'," +
+                "'[class*=\"reader-content\"]','[class*=\"content-render\"]'," +
+                "'[class*=\"reading\"]','[class*=\"prose\"]'," +
+                "'.chapter-content','#chapter-content'," +
+                "'.reader-content','.chapter-body'," +
+                "'article','main','[role=\"main\"]'" +
+                "];" +
+                "for(var i=0;i<sels.length;i++){" +
+                "  try{var el=document.querySelector(sels[i]);" +
+                "  if(!el)continue;" +
+                "  var t=(el.innerText||'').trim();" +
+                "  if(t.length>100)return JSON.stringify({sel:sels[i],text:t.substring(0,8000),len:t.length});" +
+                "  }catch(e){}}" +
+                "return '{}';" +
+                "})()",
+                8000
+            );
+            var domJson = safeJsonParse(String(domRes && domRes.text ? domRes.text() : domRes || ""));
+            if (domJson && domJson.text && domJson.text.length > 100) {
+                log("domSel=" + (domJson.sel || "?"));
+                log("domLen=" + domJson.text.length);
+                var extracted = extractStoryFromBodyText(domJson.text);
+                if (extracted && extracted.length > 100) {
+                    try { browser.close(); } catch (_) {}
+                    return extracted;
+                }
+            }
+        } catch(e) {
+            log("domErr=" + String(e).substring(0, 30));
+        }
+
+        // === TEST 4: Lấy __NEXT_DATA__ (Next.js SSR data) ===
+        try {
+            var nextRes = browser.callJs(
+                "(function(){var el=document.getElementById('__NEXT_DATA__');return el?el.textContent.substring(0,8000):''})()",
+                5000
+            );
+            var nextText = String(nextRes && nextRes.text ? nextRes.text() : nextRes || "");
+            if (nextText.length > 50) {
+                log("nextDataLen=" + nextText.length);
+                var nextJson = safeJsonParse(nextText);
+                if (nextJson && nextJson.props && nextJson.props.pageProps) {
+                    var pageProps = nextJson.props.pageProps;
+                    var chapter = pageProps.chapter || pageProps.data || {};
+                    if (chapter.content && chapter.content.length > 80) {
+                        log("nextContent=1");
+                        try { browser.close(); } catch (_) {}
+                        return plainTextToHtml(chapter.content);
+                    }
+                }
+            }
+        } catch(e) {}
+
+        // === TEST 5: Hook Canvas fillText + force re-render via scroll ===
+        try {
+            browser.callJs(
+                "(function(){" +
+                "window.__vbTexts=[];" +
+                "var orig=CanvasRenderingContext2D.prototype.fillText;" +
+                "CanvasRenderingContext2D.prototype.fillText=function(t,x,y){" +
+                "  if(t&&t.length>1)window.__vbTexts.push({t:t,y:y});" +
+                "  return orig.apply(this,arguments);" +
+                "};" +
+                "return 'canvasHooked';" +
+                "})()",
+                5000
+            );
+            log("canvasHook=1");
+
+            // Force scroll toàn trang → trigger re-render
+            browser.callJs("window.scrollTo(0,0)", 1000);
+            busyWait(1000);
+
+            // Scroll xuống dần dần
+            for (var si = 0; si < 20; si++) {
+                try {
+                    browser.callJs("window.scrollBy(0,300)", 1000);
+                } catch(_) {}
+                busyWait(500);
+            }
+
+            // Scroll ngược lên
+            browser.callJs("window.scrollTo(0,0)", 1000);
+            busyWait(1000);
+
+            // Scroll xuống lại
+            for (var si2 = 0; si2 < 20; si2++) {
+                try {
+                    browser.callJs("window.scrollBy(0,300)", 1000);
+                } catch(_) {}
+                busyWait(500);
+            }
+
+            // Thu thập canvas text
+            var canvasRes = browser.callJs(
+                "(function(){" +
+                "var t=window.__vbTexts||[];" +
+                "if(!t.length)return '';" +
+                "t.sort(function(a,b){return a.y-b.y;});" +
+                "var lines=[];" +
+                "for(var i=0;i<t.length;i++)lines.push(t[i].t);" +
+                "return lines.join('\\n');" +
+                "})()",
+                5000
+            );
+            var canvasText = String(canvasRes && canvasRes.text ? canvasRes.text() : canvasRes || "");
+            log("canvasTextLen=" + canvasText.length);
+
+            if (canvasText.length > 100) {
+                var html = plainTextToHtml(canvasText);
+                if (isGoodContent(htmlToText(html))) {
+                    try { browser.close(); } catch (_) {}
+                    return html;
+                }
+            }
+        } catch(e) {
+            log("canvasErr=" + String(e).substring(0, 30));
+        }
+
+        // === TEST 6: Hook fetch/XHR + navigate to trigger reload ===
+        try {
+            // Install intercept hooks
+            browser.callJs(
+                "(function(){" +
+                "window.__vbApi=[];" +
+                "var of=window.fetch;" +
+                "window.fetch=function(){" +
+                "  var a=arguments,u=(typeof a[0]==='string')?a[0]:(a[0]&&a[0].url?a[0].url:'');" +
+                "  return of.apply(this,a).then(function(r){" +
+                "    if(u.indexOf('segment/open')!==-1&&r.ok){" +
+                "      r.clone().text().then(function(b){window.__vbApi.push(b);}).catch(function(){});" +
+                "    }" +
+                "    return r;" +
+                "  });" +
+                "};" +
+                "return 'fetchHooked';" +
+                "})()",
+                5000
+            );
+            log("fetchHook=1");
+
+            // Trigger page reload via F5 or location reload
+            try {
+                browser.callJs("location.reload()", 3000);
+            } catch(_) {}
+
+            busyWait(15000);
+
+            // Re-install hooks (page reload resets JS context)
+            browser.callJs(
+                "(function(){" +
+                "window.__vbApi=window.__vbApi||[];" +
+                "return 'api_count='+window.__vbApi.length;" +
+                "})()",
+                3000
+            );
+
+            // Check if any API responses were intercepted
+            var apiRes = browser.callJs(
+                "(function(){return JSON.stringify(window.__vbApi||[]);})()",
+                5000
+            );
+            var apiText = String(apiRes && apiRes.text ? apiRes.text() : apiRes || "");
+            log("apiInterceptLen=" + apiText.length);
+
+            if (apiText.length > 10) {
+                var apiArr = safeJsonParse(apiText);
+                if (apiArr && apiArr.length > 0) {
+                    var allParas = [];
+                    for (var ai = 0; ai < apiArr.length; ai++) {
+                        var segData = safeJsonParse(apiArr[ai]);
+                        if (segData) {
+                            var paras = segData.paragraphs || (segData.segment && segData.segment.paragraphs);
+                            if (paras && paras.length) {
+                                for (var pi = 0; pi < paras.length; pi++) {
+                                    allParas.push(paras[pi]);
+                                }
+                            }
+                        }
+                    }
+                    if (allParas.length > 0) {
+                        var html = [];
+                        for (var hi = 0; hi < allParas.length; hi++) {
+                            var p = cleanZeroWidth(String(allParas[hi] || "").trim());
+                            if (p) html.push("<p>" + p + "</p>");
+                        }
+                        var result = html.join("\n");
+                        if (result.length > 100) {
+                            try { browser.close(); } catch (_) {}
+                            return result;
+                        }
+                    }
+                }
+            }
+        } catch(e) {
+            log("fetchErr=" + String(e).substring(0, 30));
+        }
+
+        // === TEST 7: Lấy toàn bộ text nodes ===
+        try {
+            var allTextRes = browser.callJs(
+                "(function(){" +
+                "var w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,null,false);" +
+                "var texts=[];" +
+                "while(w.nextNode()){" +
+                "  var t=w.currentNode.textContent.trim();" +
+                "  if(t.length>25)texts.push(t);" +
+                "}" +
+                "return texts.join('\\n');" +
+                "})()",
+                8000
+            );
+            var allText = String(allTextRes && allTextRes.text ? allTextRes.text() : allTextRes || "");
+            log("allTextLen=" + allText.length);
+
+            if (allText.length > 200) {
+                var extracted = extractStoryFromBodyText(allText);
+                if (extracted && extracted.length > 100) {
+                    try { browser.close(); } catch (_) {}
+                    return extracted;
+                }
+            }
+        } catch(e) {}
 
         try { browser.close(); } catch (_) {}
 
-        // Bước 8: Xử lý kết quả
-        if (finalData && finalData.paragraphs && finalData.paragraphs.length > 0) {
-            var html = [];
-            for (var i = 0; i < finalData.paragraphs.length; i++) {
-                var p = cleanZeroWidth(String(finalData.paragraphs[i] || "").trim());
-                if (p && p.length > 1) {
-                    // Lọc bỏ text junk (UI elements, navigation)
-                    if (/^(Trang Truyện|Thể loại|Trang chủ|Đăng nhập|Đăng ký|Login|Sign|Menu|Home)$/i.test(p)) continue;
-                    html.push("<p>" + p + "</p>");
-                }
-            }
-            var result = html.join("\n");
-            if (result && htmlToText(result).length > 80) {
-                return result;
-            }
-        }
-
-        // Nếu intercept fetch thất bại, thử fallback truyền thống (DOM extraction)
-        return tryBrowserDOMExtract(url);
-
-    } catch (_) {
+    } catch (e) {
+        log("brFatal=" + String(e).substring(0, 50));
         try { if (browser) browser.close(); } catch (__) {}
     }
     return "";
 }
 
-// Fallback: Extract từ DOM nếu trang web render text thông thường
-function tryBrowserDOMExtract(url) {
-    var browser = null;
-    try {
-        browser = Engine.newBrowser();
-        browser.launch(url, 45000);
+// Trích xuất nội dung truyện từ body text thô, lọc bỏ UI junk
+function extractStoryFromBodyText(bodyText) {
+    if (!bodyText || bodyText.length < 100) return "";
+    var lines = bodyText.split("\n");
+    var BAD = /^(Trang Truyện|Thể loại|Trang chủ|Đăng nhập|Đăng ký|Login|Sign|Menu|Home|Đọc truyện|Mục lục|Chương trước|Chương sau|Bình luận|Tải lại|Xem trang nguồn|Tìm kiếm|Danh sách|Top|Sắp xếp|Theo dõi|Thông báo|Cài đặt|Hồ sơ|Đọc tiếp|Mở|BXH|Tặng quà|Chưa có|vBook|Trước|Sau|ĐANG ĐỌC)$/i;
+    var SHORT_BAD = /^(Mở|Đọc|OK|Close|×|‹|›|«|»|\d+|Chương \d+)$/i;
 
-        var extractScript = "(function(){" +
-            "var BAD=/Trang Truy\\u1ec7n|Th\\u1ec3 lo\\u1ea1i|Trang ch\\u1ee7|ch\\u01b0a \\u0111\\u01b0\\u1ee3c \\u0111\\u0103ng k\\u00fd|Tr\\u00ecnh \\u0111\\u1ecdc hi\\u1ec7n|\\u0111\\u0103ng nh\\u1eadp|login|\\u0111\\u0103ng k\\u00fd ngay/i;" +
-            "function isParagraph(t){return t.length>30&&!BAD.test(t);}" +
-            "var sels=['[class*=chapter-content]','[class*=chapter-body]','[class*=reader-content]'," +
-            "  '[class*=content-render]','.chapter-content','#chapter-content'," +
-            "  '.reader-content','.chapter-body'];" +
-            "for(var i=0;i<sels.length;i++){" +
-            "  try{var n=document.querySelector(sels[i]);if(!n)continue;" +
-            "  var ps=n.querySelectorAll('p');var html='';var cnt=0;" +
-            "  for(var j=0;j<ps.length;j++){" +
-            "    var t=(ps[j].innerText||'').replace(/[\\u200B-\\u200F\\u202A-\\u202E\\u2060\\uFEFF]/g,'').trim();" +
-            "    if(isParagraph(t)){html+='<p>'+t+'</p>';cnt++;}}" +
-            "  if(cnt>=2&&html.length>100)return html;" +
-            "  }catch(_){}}" +
-            "var allP=document.querySelectorAll('p');var html2='';var cnt2=0;" +
-            "for(var i=0;i<allP.length;i++){" +
-            "  var t=(allP[i].innerText||'').replace(/[\\u200B-\\u200F\\u202A-\\u202E\\u2060\\uFEFF]/g,'').trim();" +
-            "  if(isParagraph(t)){html2+='<p>'+t+'</p>';cnt2++;}}" +
-            "return cnt2>=3?html2:'';" +
-            "})()";
+    var goodLines = [];
+    var foundContent = false;
 
-        var result = "";
-        var attempts = [10000, 20000];
-        for (var ai = 0; ai < attempts.length && !result; ai++) {
-            try {
-                var wait = attempts[ai];
-                var __start = new Date().getTime();
-                while (new Date().getTime() - __start < wait) {}
-            } catch (_) {}
-            try {
-                var r = browser.callJs(extractScript, 10000);
-                if (r) {
-                    var s = String(r.text ? r.text() : r).trim();
-                    if (s && s.length > 100 && !isLoginRequired(s)) result = s;
-                }
-            } catch (_) {}
+    for (var i = 0; i < lines.length; i++) {
+        var line = cleanZeroWidth(lines[i].trim());
+        if (!line) continue;
+        if (line.length < 10) continue;
+        if (BAD.test(line)) continue;
+        if (SHORT_BAD.test(line)) continue;
+        if (/^https?:\/\//.test(line)) continue;
+        // Bỏ lines ngắn và trông giống UI
+        if (line.length < 25 && /^\s*(Chương|Chapter|Vol|Volume|Mục|Tập)\s/i.test(line)) continue;
+
+        // Nếu dòng > 50 ký tự → rất có thể là nội dung truyện
+        if (line.length > 50) foundContent = true;
+
+        if (foundContent || line.length > 30) {
+            goodLines.push(line);
         }
-
-        try { browser.close(); } catch (_) {}
-
-        if (result) {
-            var cleaned = cleanContent(result);
-            var text = htmlToText(cleaned);
-            if (isGoodContent(text)) {
-                if (/<p[\s>]|<br/.test(cleaned)) return cleaned;
-                return plainTextToHtml(text);
-            }
-        }
-    } catch (_) {
-        try { if (browser) browser.close(); } catch (__) {}
     }
-    return "";
+
+    if (goodLines.length < 3) return "";
+
+    var html = [];
+    for (var j = 0; j < goodLines.length; j++) {
+        html.push("<p>" + goodLines[j] + "</p>");
+    }
+    return html.join("\n");
 }
 
 
@@ -827,9 +865,9 @@ function execute(url) {
         log("hasSid=" + (hasSidCookie(cookie) ? "1" : "0"));
         log("hasCf=" + (/cf_clearance/.test(cookie || "") ? "1" : "0"));
 
-        // === BƯỚC 1: Thử API trực tiếp (quick check) ===
+        // === BƯỚC 1: API Trực tiếp ===
         var bootstrapToken = readerBootstrap(cookie);
-        log("bootstrap=" + (bootstrapToken ? bootstrapToken.substring(0,8) : "none"));
+        log("bootstrap=" + (bootstrapToken ? bootstrapToken.substring(0,12) : "none"));
 
         var apiJson = fetchChapterMeta(chapterId, cookie, bootstrapToken);
         log("chapApiOk=" + (apiJson ? "1" : "0"));
@@ -839,9 +877,14 @@ function execute(url) {
             var contentStr = String(chapter.content || "");
             log("contentLen=" + contentStr.length);
 
-            // Nếu API có nội dung trực tiếp → dùng luôn
+            // Debug: Xem API trả về những keys gì
+            var apiKeys = [];
+            try { for (var k in apiJson) apiKeys.push(k); } catch(_) {}
+            log("apiKeys=" + apiKeys.join(","));
+
+            // Nếu content có nội dung trực tiếp
             var parsedContent = safeJsonParse(contentStr);
-            if (contentStr && !parsedContent) {
+            if (contentStr && contentStr.length > 50 && !parsedContent) {
                 var cleaned0 = cleanContent(contentStr);
                 var text0 = htmlToText(cleaned0);
                 if (isGoodContent(text0)) {
@@ -850,13 +893,14 @@ function execute(url) {
                 }
             }
 
-            // Thử Resolve + Decrypt (format cũ v3)
+            // Thử Resolve+Decrypt
             var meta = apiJson.contentMetaV2 || chapter.contentMetaV2 || null;
             var grantId = "";
             if (meta) grantId = meta.grantId || meta.grantID || meta.id || meta.g || "";
 
             if (grantId && cookie) {
                 var grantSecret = callResolveApi(chapterId, grantId, cookie);
+                log("grantSecret=" + (grantSecret ? "1" : "0"));
                 if (grantSecret && parsedContent && parsedContent.v === 3 && parsedContent.l2 && canUseJavaCrypto()) {
                     var decrypted = "";
                     try {
@@ -877,43 +921,65 @@ function execute(url) {
                 }
             }
 
-            // Thử Segment API trực tiếp
-            if (cookie) {
-                var hasJavaCrypto = canUseJavaCrypto();
-                var contentSession = apiJson.contentSession || (apiJson.data && apiJson.data.contentSession) || null;
+            // === Thử Segment API trực tiếp ===
+            var contentSession = apiJson.contentSession || null;
+            log("hasSession=" + (contentSession ? "1" : "0"));
 
-                if (contentSession) {
-                    var keyPair = generateRsaKeyPair();
-                    if (keyPair) {
-                        var deviceKeyId = registerReaderDevice(cookie, keyPair.publicKeyB64);
-                        if (!deviceKeyId) {
-                            var bs = readerBootstrap(cookie);
-                            deviceKeyId = registerReaderDevice(cookie, keyPair.publicKeyB64);
-                        }
+            if (contentSession) {
+                log("sessId=" + (contentSession.sessionId ? contentSession.sessionId.substring(0, 8) : "no"));
+                log("codec=" + (contentSession.segmentCodec || "?"));
+                var segCount = 0;
+                if (contentSession.segments) segCount = contentSession.segments.length;
+                log("segCount=" + segCount);
 
-                        var segResult = openSegment(chapterId, contentSession, deviceKeyId, keyPair ? keyPair.privateKey : null, 0, cookie, 0, bootstrapToken);
-                        if (segResult) {
-                            var segGrantSecret = segResult.grantSecret || (segResult.session && segResult.session.grantSecret) || "";
-                            var segContent = decryptSegment(segResult, segGrantSecret);
+                var keyPair = null;
+                if (canUseJavaCrypto()) {
+                    keyPair = generateRsaKeyPair();
+                    log("rsaKey=" + (keyPair ? "1" : "0"));
+                }
 
-                            if (isGoodContent(htmlToText(segContent))) {
-                                var totalSegments = segResult.totalSegments || segResult.segmentCount || 0;
-                                if (totalSegments > 1) {
-                                    var fullHtml = segContent;
-                                    for (var si = 1; si < Math.min(totalSegments, 30); si++) {
-                                        try {
-                                            var nextSeg = openSegment(chapterId, contentSession, deviceKeyId, keyPair ? keyPair.privateKey : null, si, cookie, si, bootstrapToken);
-                                            if (!nextSeg) break;
-                                            var nextContent = decryptSegment(nextSeg, segGrantSecret);
-                                            if (nextContent) fullHtml += "\n" + nextContent;
-                                        } catch (_) { break; }
-                                    }
-                                    if (isGoodContent(htmlToText(fullHtml))) {
-                                        return Response.success(cleanContent(fullHtml));
-                                    }
-                                } else {
-                                    return Response.success(cleanContent(segContent));
+                var deviceKeyId = null;
+                if (keyPair && cookie) {
+                    deviceKeyId = registerReaderDevice(cookie, keyPair.publicKeyB64);
+                    log("devKey=" + (deviceKeyId ? deviceKeyId.substring(0, 8) : "none"));
+                }
+
+                // Thử openSegment
+                if (cookie) {
+                    var segResult = openSegment(chapterId, contentSession, deviceKeyId,
+                        keyPair ? keyPair.privateKey : null, 0, cookie, 0, bootstrapToken);
+                    log("seg0=" + (segResult ? "1" : "0"));
+
+                    if (segResult) {
+                        // Debug: xem segment trả về gì
+                        var segKeys = [];
+                        try { for (var sk in segResult) segKeys.push(sk); } catch(_){}
+                        log("segKeys=" + segKeys.join(","));
+
+                        var segGrantSecret = segResult.grantSecret ||
+                            (segResult.session && segResult.session.grantSecret) || "";
+                        var segContent = decryptSegment(segResult, segGrantSecret);
+                        log("segDecLen=" + (segContent || "").length);
+
+                        if (isGoodContent(htmlToText(segContent))) {
+                            var totalSegments = segResult.totalSegments || segResult.segmentCount ||
+                                (contentSession.segments ? contentSession.segments.length : 0) || 1;
+                            if (totalSegments > 1) {
+                                var fullHtml = segContent;
+                                for (var si = 1; si < Math.min(totalSegments, 30); si++) {
+                                    try {
+                                        var nextSeg = openSegment(chapterId, contentSession, deviceKeyId,
+                                            keyPair ? keyPair.privateKey : null, si, cookie, si, bootstrapToken);
+                                        if (!nextSeg) break;
+                                        var nextContent = decryptSegment(nextSeg, segGrantSecret);
+                                        if (nextContent) fullHtml += "\n" + nextContent;
+                                    } catch (_) { break; }
                                 }
+                                if (isGoodContent(htmlToText(fullHtml))) {
+                                    return Response.success(cleanContent(fullHtml));
+                                }
+                            } else {
+                                return Response.success(cleanContent(segContent));
                             }
                         }
                     }
@@ -921,18 +987,18 @@ function execute(url) {
             }
         }
 
-        // === BƯỚC 2: Browser Intercept (PHƯƠNG PHÁP CHÍNH MỚI) ===
-        log("tryBrowserIntercept=1");
-        var interceptResult = tryBrowserIntercept(url);
-        log("browserInterceptLen=" + (interceptResult || "").length);
-        if (interceptResult && interceptResult.length > 50) {
-            return Response.success(interceptResult);
+        // === BƯỚC 2: Browser Approach ===
+        log("tryBrowser=1");
+        var browserResult = tryBrowserApproach(url, log);
+        log("brResult=" + (browserResult || "").length);
+        if (browserResult && browserResult.length > 50) {
+            return Response.success(browserResult);
         }
 
-        // === BƯỚC 3: HTML Fetch fallback ===
-        log("tryHtmlFetch=1");
+        // === BƯỚC 3: HTML Fetch ===
+        log("tryHtml=1");
         var htmlResult = tryHtmlFetch(url, cookie);
-        log("htmlFetchLen=" + (htmlResult || "").length);
+        log("htmlLen=" + (htmlResult || "").length);
         if (htmlResult && htmlResult.length > 50) {
             return Response.success(htmlResult);
         }
