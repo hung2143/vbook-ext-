@@ -333,15 +333,21 @@ function checkSession(cookie, log) {
 }
 
 function readerBootstrap(cookie, log) {
-    var attemptCookies = [cookie || "", null];
-    for (var ai = 0; ai < attemptCookies.length; ai++) {
+    // Thử nhiều formats body
+    var bodies = [
+        JSON.stringify({}),
+        JSON.stringify({ token: "" }),
+        ""
+    ];
+    for (var bi = 0; bi < bodies.length; bi++) {
         try {
-            var res = fetch(API_BASE + "/auth/reader-bootstrap", {
+            var opts = {
                 method: "POST",
-                headers: makeHeaders(attemptCookies[ai]),
-                body: JSON.stringify({})
-            });
-            if (log) log("bsStatus" + ai + "=" + (res ? res.status : "null"));
+                headers: makeHeaders(cookie)
+            };
+            if (bodies[bi]) opts.body = bodies[bi];
+            var res = fetch(API_BASE + "/auth/reader-bootstrap", opts);
+            if (log && bi === 0) log("bsS=" + (res ? res.status : "null"));
             if (res && res.ok) {
                 var j = res.json();
                 if (j) {
@@ -352,8 +358,16 @@ function readerBootstrap(cookie, log) {
                     if (keys.length > 0) return "keys:" + keys.join(",");
                 }
             }
+            // Capture error body for debug
+            if (log && bi === 0 && res && !res.ok) {
+                try {
+                    var errBody = res.text ? res.text() : "";
+                    if (typeof errBody === 'object' && errBody.string) errBody = errBody.string();
+                    log("bsErr=" + String(errBody).substring(0, 60));
+                } catch(_) {}
+            }
         } catch (e) {
-            if (log) log("bsErr" + ai + "=" + String(e).substring(0, 30));
+            if (log && bi === 0) log("bsExc=" + String(e).substring(0, 30));
         }
     }
     return "";
@@ -364,49 +378,27 @@ function fetchChapterMeta(chapterId, cookie, bootstrapToken, log) {
     if (bootstrapToken && bootstrapToken.indexOf("keys:") !== 0) {
         extra["X-Reader-Bootstrap"] = bootstrapToken;
     }
-    // Thử nhiều header combinations
-    var attempts = [
-        // Attempt 0: Full headers + cookie
-        { cookie: cookie || "", extra: extra, label: "full" },
-        // Attempt 1: Minimal headers (giống browser thật)
-        { cookie: cookie || "", extra: {}, label: "minimal", minimalHeaders: true },
-        // Attempt 2: Không cookie
-        { cookie: null, extra: extra, label: "noCookie" }
-    ];
-    for (var ai = 0; ai < attempts.length; ai++) {
-        try {
-            var headers;
-            if (attempts[ai].minimalHeaders) {
-                headers = {
-                    "User-Agent": UserAgent.chrome(),
-                    "Accept": "application/json",
-                    "Referer": BASE_URL + "/"
-                };
-                if (attempts[ai].cookie) headers["Cookie"] = attempts[ai].cookie;
-            } else {
-                headers = makeHeaders(attempts[ai].cookie, attempts[ai].extra);
-            }
-            var res = fetch(API_BASE + "/chapters/" + chapterId, { headers: headers });
-            if (log) log("chapFetch" + ai + "=" + (res ? res.status : "null"));
-            if (res && res.ok) {
-                var j = res.json();
-                if (j) {
-                    // Kiểm tra contentSession có populated không
-                    var cs = j.contentSession;
-                    if (cs && cs.sessionId) {
-                        if (log) log("chapFetchWin=" + attempts[ai].label);
-                        return j;
-                    }
-                    if (log) log("csType" + ai + "=" + typeof cs + ",csVal=" + JSON.stringify(cs).substring(0, 50));
-                }
-                // Dù contentSession null, vẫn trả về nếu đây là attempt cuối có response
-                if (ai === attempts.length - 1) return j;
-                // Lưu lại, tiếp tục thử
-                if (!fetchChapterMeta._lastJson) fetchChapterMeta._lastJson = j;
-            }
-        } catch (_) {}
+    // Chỉ thử với cookie (vì session đã valid)
+    try {
+        var headers = makeHeaders(cookie || "", extra);
+        var res = fetch(API_BASE + "/chapters/" + chapterId, { headers: headers });
+        if (log) log("chapS=" + (res ? res.status : "null"));
+        if (res && res.ok) {
+            var j = res.json();
+            if (j) return j;
+        }
+        // Capture error body khi không ok
+        if (res && !res.ok) {
+            try {
+                var errBody = res.text ? res.text() : "";
+                if (typeof errBody === 'object' && errBody.string) errBody = errBody.string();
+                log("chapErr=" + String(errBody).substring(0, 80));
+            } catch(_) {}
+        }
+    } catch (e) {
+        if (log) log("chapExc=" + String(e).substring(0, 30));
     }
-    return fetchChapterMeta._lastJson || null;
+    return null;
 }
 
 function registerReaderDevice(cookie, publicKeyB64) {
@@ -586,14 +578,12 @@ function tryBrowserApproach(url, log, cookie) {
     try {
         browser = Engine.newBrowser();
 
-        // Chiến lược: Load homepage trước để inject cookie, rồi navigate tới chapter
         if (cookie) {
             try {
                 browser.launch(BASE_URL + "/", 30000);
                 log("brHome=1");
                 busyWait(3000);
 
-                // Inject cookies qua document.cookie
                 var cookieParts = cookie.split(";");
                 for (var ci = 0; ci < cookieParts.length; ci++) {
                     var cp = cookieParts[ci].trim();
@@ -833,7 +823,6 @@ function tryBrowserApproach(url, log, cookie) {
                 3000
             );
 
-            // Check if any API responses were intercepted
             var apiRes = browser.callJs(
                 "(function(){return JSON.stringify(window.__vbApi||[]);})()",
                 5000
@@ -874,7 +863,6 @@ function tryBrowserApproach(url, log, cookie) {
             log("fetchErr=" + String(e).substring(0, 30));
         }
 
-        // === TEST 7: Lấy toàn bộ text nodes ===
         try {
             var allTextRes = browser.callJs(
                 "(function(){" +
@@ -909,7 +897,6 @@ function tryBrowserApproach(url, log, cookie) {
     return "";
 }
 
-// Trích xuất nội dung truyện từ body text thô, lọc bỏ UI junk
 function extractStoryFromBodyText(bodyText) {
     if (!bodyText || bodyText.length < 100) return "";
     var lines = bodyText.split("\n");
@@ -966,30 +953,30 @@ function execute(url) {
         log("hasSid=" + (hasSidCookie(cookie) ? "1" : "0"));
         log("hasCf=" + (/cf_clearance/.test(cookie || "") ? "1" : "0"));
 
-        // === BƯỚC 1: API Trực tiếp ===
+        // === BƯỚC 1: API ===
         var bootstrapToken = readerBootstrap(cookie, log);
-        log("bootstrap=" + (bootstrapToken ? bootstrapToken.substring(0,12) : "none"));
+        log("bs=" + (bootstrapToken ? bootstrapToken.substring(0,12) : "none"));
 
-        fetchChapterMeta._lastJson = null;
         var apiJson = fetchChapterMeta(chapterId, cookie, bootstrapToken, log);
-        log("chapApiOk=" + (apiJson ? "1" : "0"));
+        log("api=" + (apiJson ? "1" : "0"));
 
         if (apiJson) {
             var chapter = apiJson.chapter || {};
             var contentStr = String(chapter.content || "");
             log("contentLen=" + contentStr.length);
 
-            // Debug: Chi tiết API response
+            // Debug chi tiết
             var apiKeys = [];
             try { for (var k in apiJson) apiKeys.push(k); } catch(_) {}
-            log("apiKeys=" + apiKeys.join(","));
+            log("keys=" + apiKeys.join(","));
+            log("rl=" + String(apiJson.requireLogin));
 
-            // Debug requireLogin
-            log("reqLogin=" + String(apiJson.requireLogin));
-
-            // Debug contentSession chi tiết
             var rawCS = apiJson.contentSession;
-            log("csRaw=" + typeof rawCS + ":" + JSON.stringify(rawCS).substring(0, 100));
+            if (rawCS && rawCS.sessionId) {
+                log("cs=" + rawCS.sessionId.substring(0, 8));
+            } else {
+                log("cs=null");
+            }
 
             // Nếu content có nội dung trực tiếp
             var parsedContent = safeJsonParse(contentStr);
@@ -1121,15 +1108,9 @@ function execute(url) {
         var dbgStr = "[DBG: " + dbg.join(" | ") + "]";
 
         // Tạo error message thông minh
-        var reqLoginVal = apiJson && apiJson.requireLogin;
         var errMsg = "Không thể tải nội dung chương.\n\n";
-        if (reqLoginVal) {
-            errMsg += "Chương này YÊU CẦU ĐĂNG NHẬP.\n";
-            errMsg += "Cookie có thể đã hết hạn!\n\n";
-            errMsg += "Thử:\n";
-            errMsg += "1. Mở trang TrangTruyen trong trình duyệt, đăng nhập lại\n";
-            errMsg += "2. Copy cookie mới (F12 > Console > document.cookie)\n";
-            errMsg += "3. Cập nhật TRANGTRUYEN_COOKIE\n";
+        if (apiJson && apiJson.requireLogin) {
+            errMsg += "Lỗi\n";
         } else {
             errMsg += "Thử:\n";
             errMsg += "1. Đảm bảo đã đăng nhập\n";
