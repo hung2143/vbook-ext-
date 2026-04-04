@@ -79,9 +79,10 @@ function execute(key, page) {
     // --- Nguồn 1: WordPress REST API (JSON, đáng tin hơn HTML scraping) ---
     var perPage = 20;
     var offset = (pageNum - 1) * perPage;
+    // Dùng _embed để WP nhúng ảnh đại diện vào response, không cần field non-standard
     var restUrl = HOST + "/wp-json/wp/v2/posts?search=" + encodeURIComponent(key)
         + "&per_page=" + perPage + "&offset=" + offset
-        + "&_fields=id,slug,title,excerpt,link,featured_media_src_url,yoast_head_json";
+        + "&_embed=1&_fields=id,slug,title,excerpt,link,_links";
     var restResp = fetch(restUrl, {
         headers: {
             "user-agent": UserAgent.chrome(),
@@ -97,13 +98,22 @@ function execute(key, page) {
                     var pLink = normalizeUrl(post.link || (HOST + "/truyen/" + post.slug + "/"));
                     var pName = (post.title && (post.title.rendered || post.title)) || post.slug || "";
                     pName = pName.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-                    var pCover = (post.yoast_head_json && post.yoast_head_json.og_image && post.yoast_head_json.og_image[0] && post.yoast_head_json.og_image[0].url)
-                        || post.featured_media_src_url || "";
+                    // Lấy ảnh từ _embedded (nếu có) hoặc bỏ qua
+                    var pCover = "";
+                    try {
+                        var embedded = post._embedded;
+                        if (embedded && embedded["wp:featuredmedia"] && embedded["wp:featuredmedia"][0]) {
+                            var media = embedded["wp:featuredmedia"][0];
+                            pCover = (media.source_url)
+                                || (media.media_details && media.media_details.sizes && media.media_details.sizes.medium && media.media_details.sizes.medium.source_url)
+                                || "";
+                        }
+                    } catch (ignore) {}
                     var pDesc = (post.excerpt && (post.excerpt.rendered || post.excerpt)) || "";
                     pDesc = pDesc.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
                     pushNovel(pLink, pName, pCover, pDesc);
                 }
-                var nextPage = data.length === perPage ? (pageNum + 1).toString() : null;
+                var nextPage = posts.length >= perPage ? (pageNum + 1).toString() : null;
                 return Response.success(data, nextPage);
             }
         } catch (e) { /* fall through to HTML scraping */ }

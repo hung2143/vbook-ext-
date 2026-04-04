@@ -153,12 +153,7 @@ function execute(url, page) {
                 var link2a = normalizeUrl(a2.attr("href"));
                 if (!link2a) continue;
                 var name2a = getNameFromAnchor(a2, link2a);
-                // Tìm cover từ parent element (.hs-item) nếu anchor không có ảnh
                 var cover2a = extractCoverFromNode(a2);
-                if (!cover2a) {
-                    var parentItem = a2.parent();
-                    if (parentItem) cover2a = extractCoverFromNode(parentItem);
-                }
                 pushNovel(link2a, name2a, cover2a, "");
             }
         }
@@ -192,9 +187,7 @@ function execute(url, page) {
         var expectedNext = "/page/" + nextPageNum + "/";
         var hasNext = doc.select("a[href*='" + expectedNext + "']").size() > 0;
         if (!hasNext) {
-            // Fallback: tìm nút phân trang có rel="next" hoặc text "Sau".
             hasNext = doc.select("a[rel='next']").size() > 0;
-            if (!hasNext) hasNext = doc.html().toLowerCase().indexOf("sau") !== -1;
         }
         if (hasNext && data.length > 0) next = nextPageNum.toString();
 

@@ -156,6 +156,65 @@ function detectLastPage(doc) {
     return last;
 }
 
+function extractPostId(html) {
+    // WordPress thêm class postid-{n} vào <body>
+    var m = (html || "").match(/\bpostid-(\d+)\b/);
+    if (m) return m[1];
+    // Fallback: <article id="post-{n}">
+    m = (html || "").match(/<article[^>]+\bid="post-(\d+)"/i);
+    if (m) return m[1];
+    return null;
+}
+
+// Thử lấy danh sách chương qua WP REST API (nhanh hơn nhiều so với HTML scraping).
+// Trả về array chapter hoặc null nếu API không hoạt động.
+function fetchChaptersViaApi(postId, host) {
+    var result = [];
+    var seen = {};
+    // Các post type phổ biến cho chương truyện trên WordPress
+    var types = ["chuong", "chapter", "novel_chapter", "chapters"];
+    for (var t = 0; t < types.length; t++) {
+        var type = types[t];
+        var testUrl = host + "/wp-json/wp/v2/" + type + "?parent=" + postId
+            + "&per_page=100&page=1&orderby=menu_order&order=asc&_fields=id,title,slug,link";
+        var r = fetch(testUrl, {
+            headers: { "user-agent": UserAgent.chrome(), "referer": host + "/" }
+        });
+        if (!r.ok) continue;
+        try {
+            var firstPage = r.json();
+            if (!firstPage || firstPage.length === 0) continue;
+
+            // API này hoạt động - lấy tất cả trang
+            var page = 1;
+            var batch = firstPage;
+            while (batch && batch.length > 0) {
+                for (var i = 0; i < batch.length; i++) {
+                    var ch = batch[i];
+                    var chapUrl = normalizeUrl(ch.link || (host + "/" + ch.slug + "/"), host);
+                    if (!chapUrl || seen[chapUrl]) continue;
+                    var chapName = (ch.title && (ch.title.rendered || ch.title)) || ch.slug || "";
+                    chapName = chapName.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+                    if (!chapName) continue;
+                    seen[chapUrl] = true;
+                    result.push({ name: chapName, url: chapUrl, host: host });
+                }
+                if (batch.length < 100) break;
+                page++;
+                var nextUrl = host + "/wp-json/wp/v2/" + type + "?parent=" + postId
+                    + "&per_page=100&page=" + page + "&orderby=menu_order&order=asc&_fields=id,title,slug,link";
+                var nr = fetch(nextUrl, {
+                    headers: { "user-agent": UserAgent.chrome(), "referer": host + "/" }
+                });
+                if (!nr.ok) break;
+                batch = nr.json();
+            }
+            if (result.length > 0) return result;
+        } catch (e) { continue; }
+    }
+    return null;
+}
+
 function execute(url) {
     url = normalizeHost(url);
     var host = HOST;
@@ -164,7 +223,6 @@ function execute(url) {
     base = base.replace(/\/page\/\d+\/$/, '');
     if (!base.endsWith('/')) base += '/';
 
-    // Luôn lấy từ trang đầu để giữ thứ tự chuẩn (tránh trường hợp engine truyền vào /page/N/).
     var firstPageUrl = base;
 
     var response = fetch(firstPageUrl, {
@@ -174,7 +232,6 @@ function execute(url) {
         }
     });
 
-    // Fallback: nếu trang đầu lỗi thì mới dùng URL gốc đầu vào.
     if (!response.ok && firstPageUrl !== url) {
         response = fetch(url, {
             headers: {
@@ -187,15 +244,25 @@ function execute(url) {
     if (!response.ok) return null;
 
     var doc = response.html("utf-8");
+    var pageHtml = doc.html() || "";
+
+    // --- Thử WP REST API trước để tránh N serial HTML page fetches ---
+    var postId = extractPostId(pageHtml);
+    if (postId) {
+        var apiChapters = fetchChaptersViaApi(postId, host);
+        if (apiChapters && apiChapters.length > 0) {
+            return Response.success(apiChapters);
+        }
+    }
+
+    // --- Fallback: HTML scraping theo trang ---
     var data = [];
     var seen = {};
     collectChapters(doc, data, seen, host);
 
-    // Ưu tiên lấy đúng trang cuối từ paginator của box Danh sách chương.
     var lastPage = detectLastPage(doc);
 
     if (lastPage <= 1) {
-        // Fallback nếu paginator không hiện đủ: quét có giới hạn để tránh load quá lâu khi nhúng app.
         var emptyStreak = 0;
         for (var f = 2; f <= 120; f++) {
             var fallbackPageUrl = base + "page/" + f + "/";
@@ -218,7 +285,6 @@ function execute(url) {
         return Response.success(data);
     }
 
-    // Quét lần lượt từ trang 2 tới trang cuối, đảm bảo không sót box chương.
     for (var i = 2; i <= lastPage; i++) {
         var pageUrl = base + "page/" + i + "/";
         var r = fetch(pageUrl, {
