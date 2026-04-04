@@ -2,11 +2,11 @@
   "metadata": {
     "name": "Trang Truyện",
     "author": "Hung",
-    "version": 45,
+    "version": 1,
     "source": "https://trangtruyen.site/",
     "regexp": "(www\\.)?trangtruyen\\.site/(stories/[^/?#]+/?|read/[^/?#]+/?)(\\?.*)?$",
     "description": "Đọc truyện trên trang https://trangtruyen.site/",
-    "locale": "vn_VI",
+    "locale": "vi_VN",
     "language": "javascript",
     "type": "novel"
   },

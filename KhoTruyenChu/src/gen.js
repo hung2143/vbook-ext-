@@ -95,8 +95,16 @@ function execute(url, page) {
 
         function pushNovel(link, name, cover, desc) {
             if (!link || link.indexOf("/truyen/") < 0) return;
-            if (seen[link]) return;
-            seen[link] = true;
+            // Nếu đã có nhưng chưa có cover, cập nhật cover
+            if (seen[link]) {
+                if (cover && !data[seen[link] - 1].cover) {
+                    data[seen[link] - 1].cover = cover;
+                }
+                if (desc && !data[seen[link] - 1].description) {
+                    data[seen[link] - 1].description = desc;
+                }
+                return;
+            }
             data.push({
                 name: name,
                 link: link,
@@ -104,10 +112,11 @@ function execute(url, page) {
                 description: desc || "",
                 host: "https://khotruyenchu.click"
             });
+            seen[link] = data.length; // Store 1-based index for update
         }
 
         // Ưu tiên parse theo card để lấy được ảnh/mô tả rõ ràng hơn.
-        var cards = doc.select("article, .post, .posts .item, .jeg_post");
+        var cards = doc.select("article, .post, .posts .item, .jeg_post, .hs-item, .hs-slide, .story-item");
         for (var i = 0; i < cards.size(); i++) {
             var card = cards.get(i);
             var a = card.select("a[href*='/truyen/']").first();
@@ -115,7 +124,6 @@ function execute(url, page) {
             var link = normalizeUrl(a.attr("href"));
             var name = getNameFromAnchor(a, link);
 
-            var img = card.select("img").first();
             var cover = extractCoverFromNode(card);
             var desc = "";
             var ex = card.select(".excerpt, .entry-summary, .jeg_post_excerpt, p").first();
@@ -128,13 +136,29 @@ function execute(url, page) {
         // Một số layout WordPress chỉ có 1 article bao toàn bộ nội dung,
         // nên parse theo card có thể chỉ nhặt được 1 item đầu tiên.
         if (data.length < 5) {
+            // Ưu tiên anchor có ảnh (class hs-thumb) trước
+            var thumbLinks = doc.select("a.hs-thumb[href*='/truyen/']");
+            for (var tk = 0; tk < thumbLinks.size(); tk++) {
+                var ta = thumbLinks.get(tk);
+                var tlink = normalizeUrl(ta.attr("href"));
+                if (!tlink) continue;
+                var tname = getNameFromAnchor(ta, tlink);
+                var tcover = extractCoverFromNode(ta);
+                pushNovel(tlink, tname, tcover, "");
+            }
+            // Sau đó lấy các anchor text
             var items = doc.select("a[href*='/truyen/']");
             for (var k = 0; k < items.size(); k++) {
                 var a2 = items.get(k);
                 var link2a = normalizeUrl(a2.attr("href"));
                 if (!link2a) continue;
                 var name2a = getNameFromAnchor(a2, link2a);
+                // Tìm cover từ parent element (.hs-item) nếu anchor không có ảnh
                 var cover2a = extractCoverFromNode(a2);
+                if (!cover2a) {
+                    var parentItem = a2.parent();
+                    if (parentItem) cover2a = extractCoverFromNode(parentItem);
+                }
                 pushNovel(link2a, name2a, cover2a, "");
             }
         }

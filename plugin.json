@@ -9,23 +9,23 @@
       "name": "Trang Truyện",
       "author": "Hung",
       "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/TrangTruyen/plugin.zip",
-      "version": 35,
+      "version": 1,
       "source": "https://trangtruyen.site/",
       "icon": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/TrangTruyen/icon.png",
       "description": "Đọc truyện trên trang https://trangtruyen.site/",
       "type": "novel",
-      "locale": "vn_VI"
+      "locale": "vi_VN"
     },
     {
       "name": "Kho Truyện Chữ",
       "author": "Hung",
       "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/KhoTruyenChu/plugin.zip",
-      "version": 3,
+      "version": 1,
       "source": "https://khotruyenchu.click/",
       "icon": "",
       "description": "Đọc truyện trên trang https://khotruyenchu.click/",
       "type": "novel",
-      "locale": "vn_VI"
+      "locale": "vi_VN"
     }
   ]
 }

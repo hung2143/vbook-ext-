@@ -306,6 +306,32 @@ function makeHeaders(cookie, extra) {
     return h;
 }
 
+// Kiểm tra session còn valid không
+function checkSession(cookie, log) {
+    try {
+        var res = fetch(API_BASE + "/auth/me", {
+            headers: {
+                "User-Agent": UserAgent.chrome(),
+                "Accept": "application/json",
+                "Referer": BASE_URL + "/",
+                "Cookie": cookie || ""
+            }
+        });
+        if (log) log("authMe=" + (res ? res.status : "null"));
+        if (res && res.ok) {
+            var j = res.json();
+            if (j) {
+                var name = j.username || j.name || j.displayName || j.email || "";
+                if (log) log("user=" + (name ? name.substring(0, 10) : "anon"));
+                return true;
+            }
+        }
+    } catch (e) {
+        if (log) log("authErr=" + String(e).substring(0, 20));
+    }
+    return false;
+}
+
 function readerBootstrap(cookie, log) {
     var attemptCookies = [cookie || "", null];
     for (var ai = 0; ai < attemptCookies.length; ai++) {
@@ -315,7 +341,7 @@ function readerBootstrap(cookie, log) {
                 headers: makeHeaders(attemptCookies[ai]),
                 body: JSON.stringify({})
             });
-            if (log) log("bsStatus" + ai + "=" + (res ? res.code : "null"));
+            if (log) log("bsStatus" + ai + "=" + (res ? res.status : "null"));
             if (res && res.ok) {
                 var j = res.json();
                 if (j) {
@@ -361,7 +387,7 @@ function fetchChapterMeta(chapterId, cookie, bootstrapToken, log) {
                 headers = makeHeaders(attempts[ai].cookie, attempts[ai].extra);
             }
             var res = fetch(API_BASE + "/chapters/" + chapterId, { headers: headers });
-            if (log) log("chapFetch" + ai + "=" + (res ? res.code : "null"));
+            if (log) log("chapFetch" + ai + "=" + (res ? res.status : "null"));
             if (res && res.ok) {
                 var j = res.json();
                 if (j) {
@@ -555,15 +581,51 @@ function busyWait(ms) {
     while (new Date().getTime() - s < ms) {}
 }
 
-function tryBrowserApproach(url, log) {
+function tryBrowserApproach(url, log, cookie) {
     var browser = null;
     try {
         browser = Engine.newBrowser();
-        browser.launch(url, 60000);
-        log("brLaunched=1");
 
-        // Chờ page load + JS render hoàn tất
-        busyWait(12000);
+        // Chiến lược: Load homepage trước để inject cookie, rồi navigate tới chapter
+        if (cookie) {
+            try {
+                browser.launch(BASE_URL + "/", 30000);
+                log("brHome=1");
+                busyWait(3000);
+
+                // Inject cookies qua document.cookie
+                var cookieParts = cookie.split(";");
+                for (var ci = 0; ci < cookieParts.length; ci++) {
+                    var cp = cookieParts[ci].trim();
+                    if (!cp) continue;
+                    try {
+                        // Set cookie cho domain .trangtruyen.site
+                        browser.callJs("document.cookie='" + cp.replace(/'/g, '') + "; path=/; domain=.trangtruyen.site; SameSite=Lax'", 2000);
+                    } catch(_) {}
+                }
+                log("cookieInjected=1");
+
+                // Navigate tới chapter page
+                try {
+                    browser.callJs("window.location.href='" + url + "'", 3000);
+                } catch(_) {}
+
+                // Chờ page load
+                busyWait(15000);
+            } catch(e) {
+                log("brHomeErr=" + String(e).substring(0, 30));
+                // Fallback: load chapter trực tiếp
+                try { browser.close(); } catch(_) {}
+                browser = Engine.newBrowser();
+                browser.launch(url, 60000);
+                busyWait(12000);
+            }
+        } else {
+            browser.launch(url, 60000);
+            // Chờ page load + JS render hoàn tất
+            busyWait(12000);
+        }
+        log("brLaunched=1");
 
         // === TEST 1: Basic JS execution ===
         var jsOk = false;
@@ -1034,9 +1096,15 @@ function execute(url) {
             }
         }
 
+        // === Kiểm tra session ===
+        if (cookie) {
+            var sessionOk = checkSession(cookie, log);
+            log("sessionValid=" + (sessionOk ? "1" : "0"));
+        }
+
         // === BƯỚC 2: Browser Approach ===
         log("tryBrowser=1");
-        var browserResult = tryBrowserApproach(url, log);
+        var browserResult = tryBrowserApproach(url, log, cookie);
         log("brResult=" + (browserResult || "").length);
         if (browserResult && browserResult.length > 50) {
             return Response.success(browserResult);
@@ -1052,13 +1120,24 @@ function execute(url) {
 
         var dbgStr = "[DBG: " + dbg.join(" | ") + "]";
 
-        return Response.error(
-            "Không thể tải nội dung chương.\n\n" +
-            "Thử:\n" +
-            "1. Đảm bảo đã đăng nhập trong vBook browser\n" +
-            "2. Nhấn Tải lại\n\n" +
-            dbgStr
-        );
+        // Tạo error message thông minh
+        var reqLoginVal = apiJson && apiJson.requireLogin;
+        var errMsg = "Không thể tải nội dung chương.\n\n";
+        if (reqLoginVal) {
+            errMsg += "Chương này YÊU CẦU ĐĂNG NHẬP.\n";
+            errMsg += "Cookie có thể đã hết hạn!\n\n";
+            errMsg += "Thử:\n";
+            errMsg += "1. Mở trang TrangTruyen trong trình duyệt, đăng nhập lại\n";
+            errMsg += "2. Copy cookie mới (F12 > Console > document.cookie)\n";
+            errMsg += "3. Cập nhật TRANGTRUYEN_COOKIE\n";
+        } else {
+            errMsg += "Thử:\n";
+            errMsg += "1. Đảm bảo đã đăng nhập\n";
+            errMsg += "2. Nhấn Tải lại\n";
+        }
+        errMsg += "\n" + dbgStr;
+
+        return Response.error(errMsg);
 
     } catch (e) {
         return Response.error(
