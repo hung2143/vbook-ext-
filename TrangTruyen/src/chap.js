@@ -306,7 +306,7 @@ function makeHeaders(cookie, extra) {
     return h;
 }
 
-function readerBootstrap(cookie) {
+function readerBootstrap(cookie, log) {
     var attemptCookies = [cookie || "", null];
     for (var ai = 0; ai < attemptCookies.length; ai++) {
         try {
@@ -315,37 +315,72 @@ function readerBootstrap(cookie) {
                 headers: makeHeaders(attemptCookies[ai]),
                 body: JSON.stringify({})
             });
+            if (log) log("bsStatus" + ai + "=" + (res ? res.code : "null"));
             if (res && res.ok) {
                 var j = res.json();
                 if (j) {
                     var tok = j.token || j.bootstrapToken || j.t || j.key || j.readerToken || "";
                     if (tok) return String(tok);
-                    // Trả về toàn bộ response để debug
                     var keys = [];
                     try { for (var k in j) keys.push(k); } catch(_) {}
                     if (keys.length > 0) return "keys:" + keys.join(",");
                 }
             }
-        } catch (_) {}
+        } catch (e) {
+            if (log) log("bsErr" + ai + "=" + String(e).substring(0, 30));
+        }
     }
     return "";
 }
 
-function fetchChapterMeta(chapterId, cookie, bootstrapToken) {
+function fetchChapterMeta(chapterId, cookie, bootstrapToken, log) {
     var extra = {};
     if (bootstrapToken && bootstrapToken.indexOf("keys:") !== 0) {
         extra["X-Reader-Bootstrap"] = bootstrapToken;
     }
-    var cookieAttempts = [cookie || "", null];
-    for (var ai = 0; ai < cookieAttempts.length; ai++) {
+    // Thử nhiều header combinations
+    var attempts = [
+        // Attempt 0: Full headers + cookie
+        { cookie: cookie || "", extra: extra, label: "full" },
+        // Attempt 1: Minimal headers (giống browser thật)
+        { cookie: cookie || "", extra: {}, label: "minimal", minimalHeaders: true },
+        // Attempt 2: Không cookie
+        { cookie: null, extra: extra, label: "noCookie" }
+    ];
+    for (var ai = 0; ai < attempts.length; ai++) {
         try {
-            var res = fetch(API_BASE + "/chapters/" + chapterId, {
-                headers: makeHeaders(cookieAttempts[ai], extra)
-            });
-            if (res && res.ok) return res.json();
+            var headers;
+            if (attempts[ai].minimalHeaders) {
+                headers = {
+                    "User-Agent": UserAgent.chrome(),
+                    "Accept": "application/json",
+                    "Referer": BASE_URL + "/"
+                };
+                if (attempts[ai].cookie) headers["Cookie"] = attempts[ai].cookie;
+            } else {
+                headers = makeHeaders(attempts[ai].cookie, attempts[ai].extra);
+            }
+            var res = fetch(API_BASE + "/chapters/" + chapterId, { headers: headers });
+            if (log) log("chapFetch" + ai + "=" + (res ? res.code : "null"));
+            if (res && res.ok) {
+                var j = res.json();
+                if (j) {
+                    // Kiểm tra contentSession có populated không
+                    var cs = j.contentSession;
+                    if (cs && cs.sessionId) {
+                        if (log) log("chapFetchWin=" + attempts[ai].label);
+                        return j;
+                    }
+                    if (log) log("csType" + ai + "=" + typeof cs + ",csVal=" + JSON.stringify(cs).substring(0, 50));
+                }
+                // Dù contentSession null, vẫn trả về nếu đây là attempt cuối có response
+                if (ai === attempts.length - 1) return j;
+                // Lưu lại, tiếp tục thử
+                if (!fetchChapterMeta._lastJson) fetchChapterMeta._lastJson = j;
+            }
         } catch (_) {}
     }
-    return null;
+    return fetchChapterMeta._lastJson || null;
 }
 
 function registerReaderDevice(cookie, publicKeyB64) {
@@ -555,6 +590,10 @@ function tryBrowserApproach(url, log) {
             );
             bodyText = String(btRes && btRes.text ? btRes.text() : btRes || "");
             log("bodyLen=" + bodyText.length);
+            // Log nội dung thực tế browser thấy (để debug)
+            if (bodyText.length > 0 && bodyText.length < 1000) {
+                log("bodyPreview=" + bodyText.substring(0, 120).replace(/\n/g, '|'));
+            }
         } catch (e) {
             log("bodyErr=" + String(e).substring(0, 30));
         }
@@ -866,10 +905,11 @@ function execute(url) {
         log("hasCf=" + (/cf_clearance/.test(cookie || "") ? "1" : "0"));
 
         // === BƯỚC 1: API Trực tiếp ===
-        var bootstrapToken = readerBootstrap(cookie);
+        var bootstrapToken = readerBootstrap(cookie, log);
         log("bootstrap=" + (bootstrapToken ? bootstrapToken.substring(0,12) : "none"));
 
-        var apiJson = fetchChapterMeta(chapterId, cookie, bootstrapToken);
+        fetchChapterMeta._lastJson = null;
+        var apiJson = fetchChapterMeta(chapterId, cookie, bootstrapToken, log);
         log("chapApiOk=" + (apiJson ? "1" : "0"));
 
         if (apiJson) {
@@ -877,10 +917,17 @@ function execute(url) {
             var contentStr = String(chapter.content || "");
             log("contentLen=" + contentStr.length);
 
-            // Debug: Xem API trả về những keys gì
+            // Debug: Chi tiết API response
             var apiKeys = [];
             try { for (var k in apiJson) apiKeys.push(k); } catch(_) {}
             log("apiKeys=" + apiKeys.join(","));
+
+            // Debug requireLogin
+            log("reqLogin=" + String(apiJson.requireLogin));
+
+            // Debug contentSession chi tiết
+            var rawCS = apiJson.contentSession;
+            log("csRaw=" + typeof rawCS + ":" + JSON.stringify(rawCS).substring(0, 100));
 
             // Nếu content có nội dung trực tiếp
             var parsedContent = safeJsonParse(contentStr);
