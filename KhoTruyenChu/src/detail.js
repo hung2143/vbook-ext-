@@ -1,8 +1,17 @@
+var HOST = "https://khotruyenchu.click";
+
+function normalizeHost(url) {
+    if (!url) return url;
+    // Thay bất kỳ domain khotruyenchu.* nào bằng HOST hiện tại
+    return url.replace(/https?:\/\/(www\.)?khotruyenchu\.[^/]+/i, HOST);
+}
+
 function execute(url) {
+    url = normalizeHost(url);
     var response = fetch(url, {
         headers: {
             "user-agent": UserAgent.chrome(),
-            "referer": "https://khotruyenchu.click/"
+            "referer": HOST + "/"
         }
     });
     if (!response.ok) return null;
@@ -17,7 +26,7 @@ function execute(url) {
     function normalizeUrl(link) {
         if (!link) return "";
         if (link.startsWith("//")) return "https:" + link;
-        if (!link.startsWith("http")) return "https://khotruyenchu.click" + link;
+        if (!link.startsWith("http")) return HOST + link;
         return link;
     }
 
@@ -167,6 +176,6 @@ function execute(url) {
         description: desc || title,
         detail: info,
         ongoing: status ? !/hoàn|hoan\s*thanh|đã\s*xong|da\s*xong/i.test(status) : true,
-        host: "https://khotruyenchu.click"
+        host: HOST
     });
 }

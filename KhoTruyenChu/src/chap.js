@@ -1,8 +1,8 @@
 function cleanHtml(html) {
     if (!html) return "";
     // Loại bỏ cảnh báo sao chép và phần comment/bảng quảng cáo đơn giản.
-    html = html.replace(/Cảnh\s*báo[^<]{0,120}khotruyenchu\.(?:sbs|click)/gi, "");
-    html = html.replace(/Đọc\s*bản\s*dịch[^<]{0,120}khotruyenchu\.(?:sbs|click)/gi, "");
+    html = html.replace(/Cảnh\s*báo[^<]{0,120}khotruyenchu\.[^<"']{1,30}/gi, "");
+    html = html.replace(/Đọc\s*bản\s*dịch[^<]{0,120}khotruyenchu\.[^<"']{1,30}/gi, "");
 
     // Loại bỏ các khối điều hướng/chỉnh giao diện trong trang chương.
     html = html.replace(/<a[^>]*>\s*[≣\s]*Mục\s*lục\s*<\/a>/gi, "");
@@ -28,11 +28,20 @@ function cleanHtml(html) {
     return html;
 }
 
+var HOST = "https://khotruyenchu.click";
+
+function normalizeHost(url) {
+    if (!url) return url;
+    // Thay bất kỳ domain khotruyenchu.* nào bằng HOST hiện tại
+    return url.replace(/https?:\/\/(www\.)?khotruyenchu\.[^/]+/i, HOST);
+}
+
 function execute(url) {
+    url = normalizeHost(url);
     var response = fetch(url, {
         headers: {
             "user-agent": UserAgent.chrome(),
-            "referer": "https://khotruyenchu.click/"
+            "referer": HOST + "/"
         }
     });
     if (!response.ok) return null;

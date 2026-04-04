@@ -1,27 +1,17 @@
+var HOST = "https://khotruyenchu.click";
+
 function execute(key, page) {
     if (!page) page = "1";
     var pageNum = parseInt(page, 10);
     if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
 
-    var searchUrl = "https://khotruyenchu.click/?s=" + encodeURIComponent(key);
-    if (pageNum > 1) searchUrl += "&paged=" + pageNum;
-
-    var response = fetch(searchUrl, {
-        headers: {
-            "user-agent": UserAgent.chrome(),
-            "referer": "https://khotruyenchu.click/"
-        }
-    });
-    if (!response.ok) return null;
-
-    var doc = response.html("utf-8");
     var data = [];
     var seen = {};
 
     function normalizeUrl(link) {
         if (!link) return "";
         if (link.startsWith("//")) return "https:" + link;
-        if (!link.startsWith("http")) return "https://khotruyenchu.click" + link;
+        if (!link.startsWith("http")) return HOST + link;
         return link;
     }
 
@@ -44,7 +34,6 @@ function execute(key, page) {
         var img = node.select("img").first();
         var c = extractCoverFromImg(img);
         if (c) return c;
-
         var styleNode = node.select("[style*='background-image']").first();
         if (styleNode) {
             var st = styleNode.attr("style") || "";
@@ -73,16 +62,66 @@ function execute(key, page) {
 
     function pushNovel(link, name, cover, desc) {
         if (!link || link.indexOf("/truyen/") < 0) return;
-        if (seen[link]) return;
-        seen[link] = true;
+        // Chỉ giữ URL gốc đến truyện, bỏ phần /chuong-N/ nếu có
+        var m = link.match(/^(https?:\/\/[^/]+\/truyen\/[^/?#]+)/);
+        var canonLink = m ? m[1] + "/" : link;
+        if (seen[canonLink]) return;
+        seen[canonLink] = true;
         data.push({
             name: name,
-            link: link,
+            link: canonLink,
             cover: cover || "",
             description: desc || "",
-            host: "https://khotruyenchu.click"
+            host: HOST
         });
     }
+
+    // --- Nguồn 1: WordPress REST API (JSON, đáng tin hơn HTML scraping) ---
+    var perPage = 20;
+    var offset = (pageNum - 1) * perPage;
+    var restUrl = HOST + "/wp-json/wp/v2/posts?search=" + encodeURIComponent(key)
+        + "&per_page=" + perPage + "&offset=" + offset
+        + "&_fields=id,slug,title,excerpt,link,featured_media_src_url,yoast_head_json";
+    var restResp = fetch(restUrl, {
+        headers: {
+            "user-agent": UserAgent.chrome(),
+            "referer": HOST + "/"
+        }
+    });
+    if (restResp.ok) {
+        try {
+            var posts = restResp.json();
+            if (posts && posts.length > 0) {
+                for (var pi = 0; pi < posts.length; pi++) {
+                    var post = posts[pi];
+                    var pLink = normalizeUrl(post.link || (HOST + "/truyen/" + post.slug + "/"));
+                    var pName = (post.title && (post.title.rendered || post.title)) || post.slug || "";
+                    pName = pName.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+                    var pCover = (post.yoast_head_json && post.yoast_head_json.og_image && post.yoast_head_json.og_image[0] && post.yoast_head_json.og_image[0].url)
+                        || post.featured_media_src_url || "";
+                    var pDesc = (post.excerpt && (post.excerpt.rendered || post.excerpt)) || "";
+                    pDesc = pDesc.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+                    pushNovel(pLink, pName, pCover, pDesc);
+                }
+                var nextPage = data.length === perPage ? (pageNum + 1).toString() : null;
+                return Response.success(data, nextPage);
+            }
+        } catch (e) { /* fall through to HTML scraping */ }
+    }
+
+    // --- Nguồn 2: HTML scraping (fallback) ---
+    var searchUrl = HOST + "/?s=" + encodeURIComponent(key);
+    if (pageNum > 1) searchUrl += "&paged=" + pageNum;
+
+    var response = fetch(searchUrl, {
+        headers: {
+            "user-agent": UserAgent.chrome(),
+            "referer": HOST + "/"
+        }
+    });
+    if (!response.ok) return Response.success([], null);
+
+    var doc = response.html("utf-8");
 
     var cards = doc.select("article, .post, .posts .item, .jeg_post");
     for (var i = 0; i < cards.size(); i++) {
@@ -98,9 +137,8 @@ function execute(key, page) {
         pushNovel(link, name, cover, desc);
     }
 
-    // Layout có thể gói toàn bộ kết quả trong 1 card lớn,
-    // khi đó parse card chỉ ra 1 item đầu tiên.
-    if (data.length < 5) {
+    // Fallback nếu card selector không bắt được gì
+    if (data.length < 3) {
         var items = doc.select("a[href*='/truyen/']");
         for (var k = 0; k < items.size(); k++) {
             var e = items.get(k);
@@ -112,11 +150,9 @@ function execute(key, page) {
         }
     }
 
-    // Bỏ bước enrich theo từng truyện để tối ưu tốc độ trả kết quả tìm kiếm.
-
     var next = null;
-    var expectedNext = "&paged=" + (pageNum + 1);
-    var hasNext = doc.html().indexOf(expectedNext) !== -1 || doc.select("a[href*='/page/" + (pageNum + 1) + "/']").size() > 0;
+    var hasNext = doc.html().indexOf("paged=" + (pageNum + 1)) !== -1
+        || doc.select("a[href*='/page/" + (pageNum + 1) + "/']").size() > 0;
     if (hasNext && data.length > 0) next = (pageNum + 1).toString();
 
     return Response.success(data, next);

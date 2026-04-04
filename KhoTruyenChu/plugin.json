@@ -2,9 +2,9 @@
   "metadata": {
     "name": "Kho Truyện Chữ",
     "author": "Hung",
-    "version": 1,
+    "version": 2,
     "source": "https://khotruyenchu.click/",
-    "regexp": "(www\\.)?khotruyenchu\\.click/.*",
+    "regexp": "khotruyenchu\\.[^/]+/.*",
     "description": "Đọc truyện trên trang https://khotruyenchu.click/",
     "locale": "vi_VN",
     "language": "javascript",

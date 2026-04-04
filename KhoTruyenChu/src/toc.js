@@ -1,3 +1,11 @@
+var HOST = "https://khotruyenchu.click";
+
+function normalizeHost(url) {
+    if (!url) return url;
+    // Thay bất kỳ domain khotruyenchu.* nào bằng HOST hiện tại
+    return url.replace(/https?:\/\/(www\.)?khotruyenchu\.[^/]+/i, HOST);
+}
+
 function normalizeUrl(href, host) {
     if (!href) return "";
     if (href.startsWith("//")) return "https:" + href;
@@ -149,7 +157,8 @@ function detectLastPage(doc) {
 }
 
 function execute(url) {
-    var host = "https://khotruyenchu.click";
+    url = normalizeHost(url);
+    var host = HOST;
     var base = url;
     if (!base.endsWith('/')) base += '/';
     base = base.replace(/\/page\/\d+\/$/, '');
