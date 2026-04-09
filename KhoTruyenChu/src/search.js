@@ -15,54 +15,14 @@ function execute(key, page) {
         return link;
     }
 
-    function pickFromSrcSet(srcset) {
-        if (!srcset) return "";
-        var first = srcset.split(",")[0];
-        if (!first) return "";
-        return first.trim().split(" ")[0] || "";
-    }
-
-    function extractCoverFromImg(img) {
-        if (!img) return "";
-        var c = img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "";
-        if (!c) c = pickFromSrcSet(img.attr("data-srcset") || img.attr("srcset"));
-        return normalizeUrl(c);
-    }
-
-    function extractCoverFromNode(node) {
-        if (!node) return "";
-        var img = node.select("img").first();
-        var c = extractCoverFromImg(img);
-        if (c) return c;
-        var styleNode = node.select("[style*='background-image']").first();
-        if (styleNode) {
-            var st = styleNode.attr("style") || "";
-            var m = st.match(/url\((['"]?)([^'")]+)\1\)/i);
-            if (m) return normalizeUrl(m[2]);
-        }
-        return "";
-    }
-
-    function getNameFromAnchor(a, link) {
-        var name = a.text();
-        if (!name) name = a.attr("title");
-        if (!name) {
-            var img = a.select("img").first();
-            if (img) name = img.attr("alt");
-        }
-        if (!name) {
-            var slug = link.split('/').filter(Boolean).pop();
-            name = decodeURIComponent(slug.replace(/-/g, ' '));
-        }
-        return (name || "")
-            .replace(/^\s*bộ\s*truyện\s*/i, "")
-            .replace(/\s+/g, " ")
-            .trim();
+    function stripHtml(s) {
+        return (s || "").replace(/<[^>]*>/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
     }
 
     function pushNovel(link, name, cover, desc) {
-        if (!link || link.indexOf("/truyen/") < 0) return;
-        // Chỉ giữ URL gốc đến truyện, bỏ phần /chuong-N/ nếu có
+        if (!link) return;
+        // Chuẩn hoá link truyện
+        if (link.indexOf("/truyen/") < 0) return;
         var m = link.match(/^(https?:\/\/[^/]+\/truyen\/[^/?#]+)/);
         var canonLink = m ? m[1] + "/" : link;
         if (seen[canonLink]) return;
@@ -76,50 +36,54 @@ function execute(key, page) {
         });
     }
 
-    // --- Nguồn 1: WordPress REST API (JSON, đáng tin hơn HTML scraping) ---
+    // === Nguồn chính: WP REST API cho taxonomy bo_truyen ===
+    // Truyện trên khotruyenchu là taxonomy bo_truyen, KHÔNG phải post
     var perPage = 20;
-    var offset = (pageNum - 1) * perPage;
-    // Dùng _embed để WP nhúng ảnh đại diện vào response, không cần field non-standard
-    var restUrl = HOST + "/wp-json/wp/v2/posts?search=" + encodeURIComponent(key)
-        + "&per_page=" + perPage + "&offset=" + offset
-        + "&_embed=1&_fields=id,slug,title,excerpt,link,_links";
-    var restResp = fetch(restUrl, {
+    var apiUrl = HOST + "/wp-json/wp/v2/bo_truyen?search=" + encodeURIComponent(key)
+        + "&per_page=" + perPage
+        + "&page=" + pageNum;
+
+    var apiResp = fetch(apiUrl, {
         headers: {
             "user-agent": UserAgent.chrome(),
             "referer": HOST + "/"
         }
     });
-    if (restResp.ok) {
+
+    if (apiResp.ok) {
         try {
-            var posts = restResp.json();
-            if (posts && posts.length > 0) {
-                for (var pi = 0; pi < posts.length; pi++) {
-                    var post = posts[pi];
-                    var pLink = normalizeUrl(post.link || (HOST + "/truyen/" + post.slug + "/"));
-                    var pName = (post.title && (post.title.rendered || post.title)) || post.slug || "";
-                    pName = pName.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-                    // Lấy ảnh từ _embedded (nếu có) hoặc bỏ qua
-                    var pCover = "";
+            var terms = apiResp.json();
+            if (terms && terms.length > 0) {
+                for (var i = 0; i < terms.length; i++) {
+                    var term = terms[i];
+                    var link = normalizeUrl(term.link || (HOST + "/truyen/" + term.slug + "/"));
+                    var name = stripHtml(term.name || term.slug || "");
+                    var desc = stripHtml(term.description || "");
+
+                    // Lấy ảnh cover từ yoast_head_json nếu có
+                    var cover = "";
                     try {
-                        var embedded = post._embedded;
-                        if (embedded && embedded["wp:featuredmedia"] && embedded["wp:featuredmedia"][0]) {
-                            var media = embedded["wp:featuredmedia"][0];
-                            pCover = (media.source_url)
-                                || (media.media_details && media.media_details.sizes && media.media_details.sizes.medium && media.media_details.sizes.medium.source_url)
-                                || "";
+                        if (term.yoast_head_json && term.yoast_head_json.og_image && term.yoast_head_json.og_image[0]) {
+                            cover = term.yoast_head_json.og_image[0].url || "";
                         }
                     } catch (ignore) {}
-                    var pDesc = (post.excerpt && (post.excerpt.rendered || post.excerpt)) || "";
-                    pDesc = pDesc.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-                    pushNovel(pLink, pName, pCover, pDesc);
+
+                    // Fallback: tìm ảnh trong yoast_head (meta tag)
+                    if (!cover && term.yoast_head) {
+                        var ogMatch = term.yoast_head.match(/property="og:image"\s+content="([^"]+)"/);
+                        if (ogMatch) cover = ogMatch[1];
+                    }
+
+                    pushNovel(link, name, cover, desc);
                 }
-                var nextPage = posts.length >= perPage ? (pageNum + 1).toString() : null;
+
+                var nextPage = terms.length >= perPage ? (pageNum + 1).toString() : null;
                 return Response.success(data, nextPage);
             }
-        } catch (e) { /* fall through to HTML scraping */ }
+        } catch (e) { /* fall through */ }
     }
 
-    // --- Nguồn 2: HTML scraping (fallback) ---
+    // === Fallback: HTML scraping qua trang tìm kiếm WP ===
     var searchUrl = HOST + "/?s=" + encodeURIComponent(key);
     if (pageNum > 1) searchUrl += "&paged=" + pageNum;
 
@@ -133,37 +97,41 @@ function execute(key, page) {
 
     var doc = response.html("utf-8");
 
-    var cards = doc.select("article, .post, .posts .item, .jeg_post");
-    for (var i = 0; i < cards.size(); i++) {
-        var card = cards.get(i);
-        var a = card.select("a[href*='/truyen/']").first();
-        if (!a) continue;
-        var link = normalizeUrl(a.attr("href"));
-        var name = getNameFromAnchor(a, link);
-        var cover = extractCoverFromNode(card);
-        var desc = "";
-        var ex = card.select(".excerpt, .entry-summary, .jeg_post_excerpt, p").first();
-        if (ex) desc = ex.text();
-        pushNovel(link, name, cover, desc);
-    }
+    // Tìm tất cả link truyện trong trang
+    var anchors = doc.select("a[href*='/truyen/']");
+    for (var k = 0; k < anchors.size(); k++) {
+        var a = anchors.get(k);
+        var href = normalizeUrl(a.attr("href"));
+        if (!href) continue;
 
-    // Fallback nếu card selector không bắt được gì
-    if (data.length < 3) {
-        var items = doc.select("a[href*='/truyen/']");
-        for (var k = 0; k < items.size(); k++) {
-            var e = items.get(k);
-            var link2 = normalizeUrl(e.attr("href"));
-            if (!link2) continue;
-            var name2 = getNameFromAnchor(e, link2);
-            var cover2 = extractCoverFromNode(e);
-            pushNovel(link2, name2, cover2, "");
+        var aName = (a.text() || "").replace(/\s+/g, " ").trim();
+        if (!aName) aName = a.attr("title") || "";
+        if (!aName) {
+            var slug = href.split('/').filter(Boolean).pop();
+            aName = decodeURIComponent((slug || "").replace(/-/g, ' '));
         }
+        aName = aName.replace(/^\s*bộ\s*truyện\s*/i, "").trim();
+
+        // Lấy cover từ thẻ cha gần nhất
+        var cover2 = "";
+        var parent = a.parent();
+        if (parent) {
+            var img = parent.select("img").first();
+            if (img) {
+                cover2 = img.attr("data-src") || img.attr("src") || "";
+                cover2 = normalizeUrl(cover2);
+            }
+        }
+
+        pushNovel(href, aName, cover2, "");
     }
 
     var next = null;
-    var hasNext = doc.html().indexOf("paged=" + (pageNum + 1)) !== -1
-        || doc.select("a[href*='/page/" + (pageNum + 1) + "/']").size() > 0;
-    if (hasNext && data.length > 0) next = (pageNum + 1).toString();
+    if (data.length > 0) {
+        var hasNext = doc.html().indexOf("paged=" + (pageNum + 1)) !== -1
+            || doc.select("a[href*='/page/" + (pageNum + 1) + "/']").size() > 0;
+        if (hasNext) next = (pageNum + 1).toString();
+    }
 
     return Response.success(data, next);
 }
