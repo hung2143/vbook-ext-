@@ -1,42 +1,93 @@
-// detail.js - Lấy thông tin chi tiết một truyện trên AiTruyen
-// URL dạng: https://aitruyen.net/truyen/[slug]
+// detail.js - Lấy thông tin chi tiết truyện trên AiTruyen
 var HOST = "https://aitruyen.net";
 
 function normalizeUrl(link) {
     if (!link) return "";
-    if (link.startsWith("//")) return "https:" + link;
-    if (!link.startsWith("http")) return HOST + link;
+    if (link.indexOf("//") === 0) return "https:" + link;
+    if (link.indexOf("http") !== 0) return HOST + link;
     return link;
 }
 
 function decodeNextImage(src) {
     if (!src) return "";
     if (src.indexOf("/_next/image") >= 0) {
-        var urlParam = src.match(/url=([^&]+)/);
-        if (urlParam) return decodeURIComponent(urlParam[1]);
+        var m = src.match(/url=([^&]+)/);
+        if (m) return decodeURIComponent(m[1]);
     }
     return src;
 }
 
-function stripHtml(s) {
-    return (s || "")
-        .replace(/<script[\s\S]*?<\/script>/gi, " ")
-        .replace(/<style[\s\S]*?<\/style>/gi, " ")
-        .replace(/<[^>]*>/g, " ")
-        .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, " ")
-        .replace(/\s+/g, " ").trim();
+function normalizeCover(src) {
+    return normalizeUrl(decodeNextImage(src || ""));
+}
+
+function normalizeText(s) {
+    return (s || "").replace(/\s+/g, " ").trim();
+}
+
+function decodeEscapedText(s) {
+    if (!s) return "";
+    var out = s;
+    out = out.replace(/\\u0026/g, "&");
+    out = out.replace(/\\u003c/g, "<").replace(/\\u003e/g, ">");
+    out = out.replace(/\\u002f/g, "/");
+    out = out.replace(/\\\//g, "/");
+    out = out.replace(/\\n/g, "\n").replace(/\\r/g, " ").replace(/\\t/g, " ");
+    out = out.replace(/\\"/g, '"');
+    return normalizeText(out);
+}
+
+function pickFromJsonBlock(block, keys) {
+    if (!block) return "";
+    for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        var re = new RegExp('"' + key + '"\\s*:\\s*"([^\\"]{1,1200})"', "i");
+        var m = block.match(re);
+        if (m && m[1]) return decodeEscapedText(m[1]);
+    }
+    return "";
+}
+
+function pickListFromJsonBlock(block, keys) {
+    if (!block) return "";
+    for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        var re = new RegExp('"' + key + '"\\s*:\\s*\\[([\\s\\S]{1,800})\\]', "i");
+        var m = block.match(re);
+        if (!m || !m[1]) continue;
+
+        var listRaw = m[1];
+        var out = [];
+        var sm;
+        var strRe = /"([^"\\]{1,100})"/g;
+        while ((sm = strRe.exec(listRaw)) !== null) {
+            var item = decodeEscapedText(sm[1]);
+            if (item && out.indexOf(item) < 0) out.push(item);
+            if (out.length >= 8) break;
+        }
+        if (out.length > 0) return out.join(", ");
+    }
+    return "";
+}
+
+function extractIntroFromText(pageText) {
+    if (!pageText) return "";
+
+    var txt = normalizeText(pageText);
+    var introMatch = txt.match(/(?:GIỚI THIỆU|Giới thiệu)\s*(?:Tổng quan nhanh\s*)?([\s\S]*?)(?:DANH SÁCH CHƯƠNG|Mục lục chương|Đánh giá và thảo luận|Có thể bạn cũng thích|CỘNG ĐỒNG)/i);
+    if (introMatch && introMatch[1]) {
+        var intro = normalizeText(introMatch[1]);
+        if (intro && intro.length > 30) return intro;
+    }
+    return "";
 }
 
 function execute(url) {
-    // Trích slug từ URL
-    var slugMatch = url.match(/\/truyen\/([^/?#]+)/);
+    var slugMatch = (url || "").match(/\/truyen\/([^/?#]+)/i);
     if (!slugMatch) return null;
     var slug = slugMatch[1];
 
     var storyUrl = HOST + "/truyen/" + slug;
-
-    // === Lấy trang HTML truyện ===
     var response = fetch(storyUrl, {
         headers: {
             "user-agent": UserAgent.chrome(),
@@ -47,191 +98,101 @@ function execute(url) {
 
     var doc = response.html("utf-8");
     if (!doc) return null;
-    var pageHtml = doc.html() || "";
 
-    // === Ưu tiên lấy từ __NEXT_DATA__ ===
+    var pageHtml = doc.html() || "";
+    var pageText = doc.text() || "";
+
     var title = "";
     var cover = "";
-    var desc = "";
     var author = "";
-    var statusText = "";
     var genres = "";
+    var statusText = "";
+    var desc = "";
 
-    try {
-        var nextDataEl = doc.select("script#__NEXT_DATA__").first();
-        if (nextDataEl) {
-            var nextJson = nextDataEl.html();
-            if (nextJson && nextJson.length > 10) {
-                var nd = JSON.parse(nextJson);
-                var pageProps = nd && nd.props && nd.props.pageProps;
-                if (pageProps) {
-                    // Tìm object story trong pageProps
-                    var story = pageProps.story || pageProps.data || pageProps.novel || pageProps.book || null;
+    var aroundSlug = "";
+    var slugIdx = pageHtml.indexOf('"slug":"' + slug + '"');
+    if (slugIdx >= 0) {
+        var start = Math.max(0, slugIdx - 1800);
+        var end = Math.min(pageHtml.length, slugIdx + 5000);
+        aroundSlug = pageHtml.substring(start, end);
+    }
 
-                    // Nếu không có key trực tiếp, tìm object có title/name
-                    if (!story) {
-                        var ppKeys = Object.keys(pageProps);
-                        for (var ki = 0; ki < ppKeys.length; ki++) {
-                            var val = pageProps[ppKeys[ki]];
-                            if (val && typeof val === "object" && !val.length && (val.title || val.name) && (val.slug || val.id)) {
-                                story = val;
-                                break;
-                            }
-                        }
-                    }
+    title = pickFromJsonBlock(aroundSlug, ["title", "name"]);
+    cover = normalizeCover(pickFromJsonBlock(aroundSlug, ["cover", "coverImage", "coverUrl", "thumbnail", "thumbnailUrl", "image", "poster"]));
+    author = pickFromJsonBlock(aroundSlug, ["author", "authorName", "translator"]);
+    statusText = pickFromJsonBlock(aroundSlug, ["status", "state"]);
+    desc = pickFromJsonBlock(aroundSlug, ["description", "summary", "synopsis", "excerpt"]);
+    genres = pickListFromJsonBlock(aroundSlug, ["categories", "genres", "tags"]);
 
-                    if (story) {
-                        title = story.title || story.name || "";
-                        cover = story.cover || story.thumbnail || story.image || story.coverUrl || "";
-                        if (cover && !cover.startsWith("http")) cover = normalizeUrl(cover);
-                        cover = decodeNextImage(cover);
-
-                        desc = story.description || story.summary || story.synopsis || "";
-                        author = story.author || "";
-                        if (!author && story.authors && story.authors.length > 0) {
-                            author = story.authors[0].name || story.authors[0];
-                        }
-                        if (typeof author === "object") author = author.name || "";
-
-                        statusText = story.status || story.state || "";
-
-                        if (story.genres && story.genres.length > 0) {
-                            var genreArr = [];
-                            for (var gi = 0; gi < story.genres.length; gi++) {
-                                var g = story.genres[gi];
-                                genreArr.push(typeof g === "string" ? g : (g.name || g.title || ""));
-                            }
-                            genres = genreArr.filter(function(s) { return s; }).join(", ");
-                        } else if (story.categories && story.categories.length > 0) {
-                            var catArr = [];
-                            for (var ci = 0; ci < story.categories.length; ci++) {
-                                var c = story.categories[ci];
-                                catArr.push(typeof c === "string" ? c : (c.name || c.title || ""));
-                            }
-                            genres = catArr.filter(function(s) { return s; }).join(", ");
-                        }
-                    }
-                }
-            }
-        }
-    } catch (e) { /* fallback to HTML */ }
-
-    // === Fallback HTML: Tiêu đề ===
     if (!title) {
         var h1 = doc.select("h1").first();
-        if (h1) title = h1.text().trim();
-        if (!title) title = doc.select("title").text().replace(/[\s\-|]*AI Truy[eệ]n.*/i, "").trim();
-        if (!title) title = decodeURIComponent(slug.replace(/-/g, " "));
+        if (h1) title = normalizeText(h1.text());
     }
+    if (!title) title = normalizeText(doc.select("meta[property='og:title']").attr("content"));
+    if (!title) title = normalizeText(doc.select("title").text().replace(/[\s\-|]*AI Truy[eệ]n.*/i, ""));
+    if (!title) title = decodeURIComponent(slug.replace(/-/g, " "));
 
-    // === Fallback HTML: Cover ===
+    if (!cover) cover = normalizeCover(doc.select("meta[property='og:image']").attr("content"));
     if (!cover) {
-        // og:image
-        var ogImage = doc.select("meta[property='og:image']").attr("content");
-        if (ogImage) cover = normalizeUrl(ogImage);
-    }
-    if (!cover) {
-        // Tìm img đầu tiên gần h1 hoặc trong phần header
-        var allImgs = doc.select("img");
-        for (var ii = 0; ii < Math.min(allImgs.size(), 15); ii++) {
-            var imgEl = allImgs.get(ii);
-            var imgSrc = imgEl.attr("src") || imgEl.attr("data-src") || "";
-            // Bỏ qua icon nhỏ, logo
-            if (!imgSrc) continue;
-            if (imgSrc.indexOf("logo") >= 0) continue;
-            if (imgSrc.indexOf("icon") >= 0) continue;
-            if (imgSrc.indexOf("avatar") >= 0) continue;
-            // Chấp nhận ảnh có kích thước hợp lý (cover truyện)
-            imgSrc = decodeNextImage(imgSrc);
-            if (imgSrc) {
-                cover = normalizeUrl(imgSrc);
+        var imgs = doc.select("img");
+        for (var i = 0; i < Math.min(imgs.size(), 30); i++) {
+            var src = imgs.get(i).attr("src") || imgs.get(i).attr("data-src") || "";
+            if (!src) continue;
+            src = normalizeCover(src);
+            if (!src) continue;
+            if (src.indexOf("/media/covers/") >= 0) {
+                cover = src;
                 break;
             }
+            if (src.indexOf("logo") >= 0 || src.indexOf("icon") >= 0 || src.indexOf("avatar") >= 0) continue;
+            if (!cover) cover = src;
         }
     }
 
-    // === Fallback HTML: Mô tả ===
-    if (!desc) {
-        desc = doc.select("meta[property='og:description']").attr("content");
-    }
-    if (!desc) {
-        desc = doc.select("meta[name='description']").attr("content") || "";
-    }
-    // Lấy nội dung giới thiệu từ DOM - tìm phần "Giới thiệu"
-    if (!desc) {
-        // Trên AiTruyen, nội dung giới thiệu nằm sau text "Giới thiệu"
-        var allPs = doc.select("p");
-        var foundIntro = false;
-        var descParts = [];
-        for (var pi = 0; pi < allPs.size(); pi++) {
-            var pEl = allPs.get(pi);
-            var pText = (pEl.text() || "").trim();
-            if (!pText) continue;
-            if (pText === "Giới thiệu") {
-                foundIntro = true;
-                continue;
-            }
-            if (foundIntro && pText.length > 20) {
-                descParts.push(pText);
-                if (descParts.length >= 5) break;
-            }
-            if (foundIntro && /^(Danh sách chương|Cộng đồng|Đánh giá|Bình luận)$/i.test(pText)) break;
-        }
-        if (descParts.length > 0) desc = descParts.join("\n");
-    }
-    desc = (desc || "").replace(/\s+/g, " ").trim();
-    if (!desc) desc = title;
-
-    // === Fallback HTML: Tác giả ===
-    if (!author) {
-        var metaOgAuthor = doc.select("meta[name='author']").attr("content");
-        if (metaOgAuthor) author = metaOgAuthor.trim();
-    }
-    if (!author) {
-        var ldMatch = pageHtml.match(/"author"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/);
-        if (ldMatch) author = ldMatch[1];
-    }
-    if (!author) {
-        // AiTruyen hiển thị tên tác giả ngay dưới tiêu đề truyện
-        // Thường là text nhỏ trước phần giới thiệu
-        var spans = doc.select("span");
-        for (var si = 0; si < Math.min(spans.size(), 20); si++) {
-            var sp = spans.get(si);
-            var spClass = sp.attr("class") || "";
-            if (spClass.indexOf("ink-soft") >= 0 || spClass.indexOf("text-xs") >= 0) {
-                var spText = sp.text().trim();
-                if (spText && spText.length > 1 && spText.length < 60 && !/^(Còn|Hoàn|Chương|Chapter)/i.test(spText)) {
-                    author = spText;
-                    break;
-                }
-            }
+    if (!author || !genres) {
+        var lineMatch = pageText.match(/\n?([^\n\r]{2,80})\s*•\s*([^\n\r]{2,120})/);
+        if (lineMatch) {
+            if (!author) author = normalizeText(lineMatch[1]);
+            if (!genres) genres = normalizeText(lineMatch[2]);
         }
     }
 
-    // === Fallback HTML: Trạng thái ===
     if (!statusText) {
-        var statusMatch = pageHtml.match(/(Còn\s*tiếp|Hoàn\s*thành|Đang ra)/i);
-        if (statusMatch) statusText = statusMatch[1].trim();
+        var stMatch = pageText.match(/\b(Còn\s*tiếp|Hoàn\s*thành|Đang\s*ra)\b/i);
+        if (stMatch) statusText = normalizeText(stMatch[1]);
     }
 
-    // === Fallback HTML: Thể loại ===
     if (!genres) {
-        var genreLinks = doc.select("a[href*='/the-loai/'], a[href*='/genre/']");
-        if (genreLinks.size() > 0) {
-            var genreArr = [];
-            for (var gi = 0; gi < genreLinks.size(); gi++) {
-                genreArr.push(genreLinks.get(gi).text().trim());
+        var chips = doc.select("a[href*='/the-loai/'], a[href*='/genre/'], a[href*='/tag/']");
+        if (chips.size() > 0) {
+            var arr = [];
+            for (var c = 0; c < chips.size(); c++) {
+                var t = normalizeText(chips.get(c).text());
+                if (t && arr.indexOf(t) < 0) arr.push(t);
             }
-            if (genreArr.length > 0) genres = genreArr.join(", ");
+            genres = arr.join(", ");
         }
     }
+
+    if (!desc) desc = extractIntroFromText(pageText);
+    if (!desc) desc = normalizeText(doc.select("meta[property='og:description']").attr("content"));
+    if (!desc) desc = normalizeText(doc.select("meta[name='description']").attr("content"));
+    if (!desc || /^Nền tảng truyện thông minh/i.test(desc)) {
+        var ps = doc.select("p");
+        for (var p = 0; p < ps.size(); p++) {
+            var pt = normalizeText(ps.get(p).text());
+            if (!pt || pt.length < 40) continue;
+            if (/^(Nền tảng truyện thông minh|Lối vào chính|Yêu cầu gỡ truyện)/i.test(pt)) continue;
+            desc = pt;
+            break;
+        }
+    }
+    if (!desc) desc = title;
 
     var infoLines = [];
     if (author) infoLines.push("Tác giả: " + author);
     if (genres) infoLines.push("Thể loại: " + genres);
     if (statusText) infoLines.push("Trạng thái: " + statusText);
-
-    var isOngoing = statusText ? !/ho[àa]n|complete|finished/i.test(statusText) : true;
 
     return Response.success({
         name: title,
@@ -239,7 +200,7 @@ function execute(url) {
         author: author,
         description: desc,
         detail: infoLines.join("<br>"),
-        ongoing: isOngoing,
+        ongoing: statusText ? !/ho[àa]n|complete|completed|finished/i.test(statusText) : true,
         host: HOST
     });
 }
