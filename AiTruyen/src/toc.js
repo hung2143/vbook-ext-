@@ -27,82 +27,52 @@ function pushChapter(list, seen, chapUrl, chapName) {
     });
 }
 
-function extractFromHtml(slug, doc, html, list, seen) {
+function extractChaptersFromDoc(slug, doc, list, seen) {
+    // Lấy tất cả link /truyen/slug/chuong-N
     var anchors = doc.select("a[href*='/truyen/" + slug + "/chuong-']");
     for (var i = 0; i < anchors.size(); i++) {
         var a = anchors.get(i);
-        var href = normalizeUrl(a.attr("href") || "");
-        if (!href) continue;
-        var name = "";
-        var mName = normalizeText(a.text()).match(/(Chương\s*\d+[^•]*)/i);
-        if (mName) name = normalizeText(mName[1]);
-        if (!name) {
-            var n = parseChapterNum(href);
-            name = n > 0 ? ("Chương " + n) : "Chương";
+        var href = a.attr("href") || "";
+        // Xóa fragment (#...) và query params (???param=...)
+        href = href.split("#")[0].split("?")[0];
+        if (!href || href.indexOf("/chuong-") < 0) continue;
+        var chapUrl = normalizeUrl(href);
+
+        // Lấy tên chương: lấy từ text của thẻ a, bỏ qua các text không phải tên chương
+        var rawText = normalizeText(a.text());
+        var chapName = "";
+
+        // Thử lấy "Chương N: Tên" từ text
+        var chapMatch = rawText.match(/(Chương\s*\d+[^•\n\r]{0,100})/i);
+        if (chapMatch) {
+            chapName = normalizeText(chapMatch[1]);
+            // Cắt bỏ phần sau bullet hoặc ngày tháng dài
+            chapName = chapName.replace(/\s*•\s*.*$/, "").trim();
         }
-        pushChapter(list, seen, href, name);
-    }
-
-    if (list.length > 0) return;
-
-    var re = new RegExp('https?:\\/\\/aitruyen\\.net\\/truyen\\/' + slug + '\\/chuong-(\\d+)', 'gi');
-    var m;
-    while ((m = re.exec(html || "")) !== null) {
-        var n2 = parseInt(m[1], 10);
-        if (!n2) continue;
-        var u = "https://aitruyen.net/truyen/" + slug + "/chuong-" + n2;
-        pushChapter(list, seen, u, "Chương " + n2);
+        if (!chapName) {
+            var n = parseChapterNum(chapUrl);
+            chapName = n > 0 ? ("Chương " + n) : "Chương";
+        }
+        pushChapter(list, seen, chapUrl, chapName);
     }
 }
 
-function fetchJson(url, referer) {
-    var resp = fetch(url, {
+function fetchPage(storyUrl, pageNum, slug, list, seen) {
+    var pageUrl = storyUrl + "?chapterPage=" + pageNum + "&chapterOrder=asc";
+    var resp = fetch(pageUrl, {
         headers: {
             "user-agent": UserAgent.chrome(),
-            "referer": referer || (HOST + "/"),
-            "accept": "application/json"
+            "referer": storyUrl
         }
     });
-    if (!resp.ok) return null;
-    try {
-        return resp.json();
-    } catch (e) {
-        return null;
-    }
-}
+    if (!resp.ok) return false;
 
-function tryApiToc(slug) {
-    var out = [];
-    var seen = {};
+    var doc = resp.html("utf-8");
+    if (!doc) return false;
 
-    var storyJson = fetchJson(HOST + "/api/stories/" + slug, HOST + "/");
-    if (!storyJson) return out;
-
-    var story = storyJson.story || storyJson.data || storyJson.item || storyJson;
-    var storyId = story && (story.id || story.storyId || "");
-    if (!storyId) return out;
-
-    var chapterJson = fetchJson(HOST + "/api/stories/" + storyId + "/chapters?page=1&limit=5000", HOST + "/truyen/" + slug);
-    if (!chapterJson) return out;
-
-    var items = chapterJson.items || chapterJson.data || chapterJson.chapters || [];
-    for (var i = 0; i < items.length; i++) {
-        var c = items[i] || {};
-        var cNum = c.chapterNumber || c.number || c.index || c.order || 0;
-        var cUrl = c.url ? normalizeUrl(c.url) : "";
-        if (!cUrl && cNum) cUrl = HOST + "/truyen/" + slug + "/chuong-" + cNum;
-        if (!cUrl && c.id) cUrl = HOST + "/truyen/" + slug + "/chuong-" + c.id;
-        if (!cUrl) continue;
-
-        var cName = normalizeText(c.title || c.name || "");
-        if (!cName) {
-            var n = parseChapterNum(cUrl) || parseInt(cNum, 10) || (i + 1);
-            cName = "Chương " + n;
-        }
-        pushChapter(out, seen, cUrl, cName);
-    }
-
-    return out;
+    var before = list.length;
+    extractChaptersFromDoc(slug, doc, list, seen);
+    return list.length > before; // true nếu thêm được chương mới
 }
 
 function execute(url) {
@@ -110,19 +80,13 @@ function execute(url) {
     if (!slugMatch) return null;
     var slug = slugMatch[1];
 
-    var apiData = tryApiToc(slug);
-    if (apiData.length > 0) {
-        apiData.sort(function(a, b) {
-            return parseChapterNum(a.url) - parseChapterNum(b.url);
-        });
-        return Response.success(apiData);
-    }
-
     var storyUrl = HOST + "/truyen/" + slug;
     var result = [];
     var seen = {};
 
-    var firstResp = fetch(storyUrl + "?chapterOrder=asc", {
+    // Fetch trang đầu (chapterOrder=asc để lấy từ chương 1)
+    var firstUrl = storyUrl + "?chapterPage=1&chapterOrder=asc";
+    var firstResp = fetch(firstUrl, {
         headers: {
             "user-agent": UserAgent.chrome(),
             "referer": HOST + "/"
@@ -133,10 +97,13 @@ function execute(url) {
     var firstDoc = firstResp.html("utf-8");
     if (!firstDoc) return Response.success([]);
 
-    var firstHtml = firstDoc.html() || "";
-    extractFromHtml(slug, firstDoc, firstHtml, result, seen);
+    extractChaptersFromDoc(slug, firstDoc, result, seen);
 
+    // Lấy tổng số trang từ pagination
+    // Trên aitruyen.net: link dạng ?chapterPage=123&chapterOrder=asc&communityTab=reviews#danh-sach-chuong
     var maxPage = 1;
+
+    // Tìm số trang lớn nhất trong pagination
     var pageLinks = firstDoc.select("a[href*='chapterPage=']");
     for (var p = 0; p < pageLinks.size(); p++) {
         var href = pageLinks.get(p).attr("href") || "";
@@ -146,43 +113,34 @@ function execute(url) {
         if (n > maxPage) maxPage = n;
     }
 
-    if (maxPage <= 1) {
-        var totalMatch = firstHtml.match(/trong\s+tổng\s*([\d.,]+K?)\s*chương/i);
+    // Nếu không tìm được từ links, thử tính từ text "Đang xem X - Y trong tổng Z.NK chương"
+    if (maxPage <= 1 && result.length > 0) {
+        var pageText = firstDoc.text() || "";
+        var totalMatch = pageText.match(/trong\s+tổng\s*([\d.,]+K?)\s*chương/i);
         if (totalMatch) {
             var totalStr = totalMatch[1].replace(/\./g, "").replace(",", ".");
             var total = 0;
             if (totalStr.indexOf("K") >= 0) total = Math.ceil(parseFloat(totalStr.replace("K", "")) * 1000);
             else total = parseInt(totalStr, 10);
-            if (total > 0) {
-                var pageSize = result.length > 0 ? result.length : 24;
-                maxPage = Math.ceil(total / pageSize);
+            if (total > 0 && result.length > 0) {
+                maxPage = Math.ceil(total / result.length);
             }
         }
     }
 
-    if (maxPage > 220) maxPage = 220;
+    // Giới hạn an toàn (không fetch quá nhiều trang)
+    if (maxPage > 300) maxPage = 300;
 
+    // Fetch các trang còn lại
     for (var pg = 2; pg <= maxPage; pg++) {
-        var pageUrl = storyUrl + "?chapterPage=" + pg + "&chapterOrder=asc";
-        var resp = fetch(pageUrl, {
-            headers: {
-                "user-agent": UserAgent.chrome(),
-                "referer": storyUrl
-            }
-        });
-        if (!resp.ok) break;
-
-        var doc = resp.html("utf-8");
-        if (!doc) break;
-
-        var before = result.length;
-        extractFromHtml(slug, doc, doc.html() || "", result, seen);
-        if (result.length === before) {
-            // Trang không thêm chương mới, dừng sớm để tránh timeout.
+        var added = fetchPage(storyUrl, pg, slug, result, seen);
+        if (!added && pg > 2) {
+            // Trang không thêm được chương mới → dừng sớm
             break;
         }
     }
 
+    // Sort theo số chương
     result.sort(function(a, b) {
         return parseChapterNum(a.url) - parseChapterNum(b.url);
     });

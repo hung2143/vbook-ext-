@@ -18,68 +18,15 @@ function decodeNextImage(src) {
 }
 
 function normalizeCover(src) {
-    return normalizeUrl(decodeNextImage(src || ""));
+    src = decodeNextImage(src || "");
+    if (!src) return "";
+    if (src.indexOf("//") === 0) return "https:" + src;
+    if (src.indexOf("http") !== 0) return HOST + src;
+    return src;
 }
 
 function normalizeText(s) {
     return (s || "").replace(/\s+/g, " ").trim();
-}
-
-function decodeEscapedText(s) {
-    if (!s) return "";
-    var out = s;
-    out = out.replace(/\\u0026/g, "&");
-    out = out.replace(/\\u003c/g, "<").replace(/\\u003e/g, ">");
-    out = out.replace(/\\u002f/g, "/");
-    out = out.replace(/\\\//g, "/");
-    out = out.replace(/\\n/g, "\n").replace(/\\r/g, " ").replace(/\\t/g, " ");
-    out = out.replace(/\\"/g, '"');
-    return normalizeText(out);
-}
-
-function pickFromJsonBlock(block, keys) {
-    if (!block) return "";
-    for (var i = 0; i < keys.length; i++) {
-        var key = keys[i];
-        var re = new RegExp('"' + key + '"\\s*:\\s*"([^\\"]{1,1200})"', "i");
-        var m = block.match(re);
-        if (m && m[1]) return decodeEscapedText(m[1]);
-    }
-    return "";
-}
-
-function pickListFromJsonBlock(block, keys) {
-    if (!block) return "";
-    for (var i = 0; i < keys.length; i++) {
-        var key = keys[i];
-        var re = new RegExp('"' + key + '"\\s*:\\s*\\[([\\s\\S]{1,800})\\]', "i");
-        var m = block.match(re);
-        if (!m || !m[1]) continue;
-
-        var listRaw = m[1];
-        var out = [];
-        var sm;
-        var strRe = /"([^"\\]{1,100})"/g;
-        while ((sm = strRe.exec(listRaw)) !== null) {
-            var item = decodeEscapedText(sm[1]);
-            if (item && out.indexOf(item) < 0) out.push(item);
-            if (out.length >= 8) break;
-        }
-        if (out.length > 0) return out.join(", ");
-    }
-    return "";
-}
-
-function extractIntroFromText(pageText) {
-    if (!pageText) return "";
-
-    var txt = normalizeText(pageText);
-    var introMatch = txt.match(/(?:GIỚI THIỆU|Giới thiệu)\s*(?:Tổng quan nhanh\s*)?([\s\S]*?)(?:DANH SÁCH CHƯƠNG|Mục lục chương|Đánh giá và thảo luận|Có thể bạn cũng thích|CỘNG ĐỒNG)/i);
-    if (introMatch && introMatch[1]) {
-        var intro = normalizeText(introMatch[1]);
-        if (intro && intro.length > 30) return intro;
-    }
-    return "";
 }
 
 function execute(url) {
@@ -99,9 +46,6 @@ function execute(url) {
     var doc = response.html("utf-8");
     if (!doc) return null;
 
-    var pageHtml = doc.html() || "";
-    var pageText = doc.text() || "";
-
     var title = "";
     var cover = "";
     var author = "";
@@ -109,21 +53,67 @@ function execute(url) {
     var statusText = "";
     var desc = "";
 
-    var aroundSlug = "";
-    var slugIdx = pageHtml.indexOf('"slug":"' + slug + '"');
-    if (slugIdx >= 0) {
-        var start = Math.max(0, slugIdx - 1800);
-        var end = Math.min(pageHtml.length, slugIdx + 5000);
-        aroundSlug = pageHtml.substring(start, end);
+    // === Ưu tiên 1: Lấy từ __NEXT_DATA__ JSON ===
+    try {
+        var nextDataEl = doc.select("script#__NEXT_DATA__").first();
+        if (nextDataEl) {
+            var nextJson = nextDataEl.html();
+            if (nextJson && nextJson.length > 10) {
+                var nd = JSON.parse(nextJson);
+                var pp = nd && nd.props && nd.props.pageProps;
+                if (pp) {
+                    // story object thường ở pp.story hoặc pp.data
+                    var story = pp.story || pp.data || pp.item || null;
+                    if (story && typeof story === "object" && !story.length) {
+                        title = story.title || story.name || "";
+                        author = "";
+                        if (story.author) {
+                            if (typeof story.author === "string") {
+                                author = story.author;
+                            } else if (story.author.name) {
+                                author = story.author.name;
+                            } else if (story.author.username) {
+                                author = story.author.username;
+                            }
+                        }
+                        if (!author && story.authorName) author = story.authorName;
+                        if (!author && story.translator) author = story.translator;
+
+                        // Cover
+                        var rawCover = story.cover || story.thumbnail || story.image || story.coverUrl || story.coverImage || "";
+                        if (rawCover) cover = normalizeCover(rawCover);
+
+                        // Status
+                        statusText = story.status || story.state || "";
+                        if (statusText === "ongoing") statusText = "Còn tiếp";
+                        else if (statusText === "completed") statusText = "Hoàn thành";
+
+                        // Genres/Categories
+                        var cats = story.categories || story.genres || story.tags || [];
+                        if (cats && cats.length > 0) {
+                            var genArr = [];
+                            for (var ci = 0; ci < cats.length; ci++) {
+                                var cat = cats[ci];
+                                var catName = typeof cat === "string" ? cat : (cat.name || cat.title || "");
+                                if (catName && genArr.indexOf(catName) < 0) genArr.push(catName);
+                            }
+                            genres = genArr.join(", ");
+                        }
+
+                        // Description
+                        desc = story.description || story.summary || story.synopsis || "";
+                        desc = normalizeText(desc);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        // JSON parse thất bại, tiếp tục fallback
     }
 
-    title = pickFromJsonBlock(aroundSlug, ["title", "name"]);
-    cover = normalizeCover(pickFromJsonBlock(aroundSlug, ["cover", "coverImage", "coverUrl", "thumbnail", "thumbnailUrl", "image", "poster"]));
-    author = pickFromJsonBlock(aroundSlug, ["author", "authorName", "translator"]);
-    statusText = pickFromJsonBlock(aroundSlug, ["status", "state"]);
-    desc = pickFromJsonBlock(aroundSlug, ["description", "summary", "synopsis", "excerpt"]);
-    genres = pickListFromJsonBlock(aroundSlug, ["categories", "genres", "tags"]);
+    // === Fallback: Parse từ DOM ===
 
+    // Tiêu đề
     if (!title) {
         var h1 = doc.select("h1").first();
         if (h1) title = normalizeText(h1.text());
@@ -132,6 +122,7 @@ function execute(url) {
     if (!title) title = normalizeText(doc.select("title").text().replace(/[\s\-|]*AI Truy[eệ]n.*/i, ""));
     if (!title) title = decodeURIComponent(slug.replace(/-/g, " "));
 
+    // Cover
     if (!cover) cover = normalizeCover(doc.select("meta[property='og:image']").attr("content"));
     if (!cover) {
         var imgs = doc.select("img");
@@ -140,28 +131,38 @@ function execute(url) {
             if (!src) continue;
             src = normalizeCover(src);
             if (!src) continue;
-            if (src.indexOf("/media/covers/") >= 0) {
-                cover = src;
-                break;
-            }
             if (src.indexOf("logo") >= 0 || src.indexOf("icon") >= 0 || src.indexOf("avatar") >= 0) continue;
             if (!cover) cover = src;
+            break;
         }
     }
 
+    // Tác giả và thể loại: Trên trang aitruyen.net, hiển thị dạng "Tên tác giả • Thể loại"
+    // Pattern này xuất hiện trong các thẻ text gần tiêu đề truyện
     if (!author || !genres) {
-        var lineMatch = pageText.match(/\n?([^\n\r]{2,80})\s*•\s*([^\n\r]{2,120})/);
-        if (lineMatch) {
-            if (!author) author = normalizeText(lineMatch[1]);
-            if (!genres) genres = normalizeText(lineMatch[2]);
+        // Tìm pattern "tác giả • thể loại" trong DOM
+        // Các thẻ span/p chứa bullet separator
+        var allElements = doc.select("span, p, div");
+        for (var ei = 0; ei < Math.min(allElements.size(), 200); ei++) {
+            var el = allElements.get(ei);
+            var elText = normalizeText(el.text());
+            // Bỏ qua elements quá dài (là description) hoặc quá ngắn
+            if (!elText || elText.length < 3 || elText.length > 200) continue;
+            // Tìm pattern: "text • text"
+            var bulletMatch = elText.match(/^([^•\n]{2,60})\s*•\s*([^•\n]{2,80})$/);
+            if (bulletMatch) {
+                var part1 = normalizeText(bulletMatch[1]);
+                var part2 = normalizeText(bulletMatch[2]);
+                // Bỏ qua nếu là kiểu "số chương" hay "số xem"
+                if (/^\d/.test(part2) || /chương|xem|bình|đánh/i.test(part2)) continue;
+                if (!author && part1 && part1.length > 1) author = part1;
+                if (!genres && part2 && part2.length > 1) genres = part2;
+                if (author && genres) break;
+            }
         }
     }
 
-    if (!statusText) {
-        var stMatch = pageText.match(/\b(Còn\s*tiếp|Hoàn\s*thành|Đang\s*ra)\b/i);
-        if (stMatch) statusText = normalizeText(stMatch[1]);
-    }
-
+    // Thể loại từ links thể loại
     if (!genres) {
         var chips = doc.select("a[href*='/the-loai/'], a[href*='/genre/'], a[href*='/tag/']");
         if (chips.size() > 0) {
@@ -174,7 +175,14 @@ function execute(url) {
         }
     }
 
-    if (!desc) desc = extractIntroFromText(pageText);
+    // Trạng thái
+    if (!statusText) {
+        var pageText = doc.text() || "";
+        var stMatch = pageText.match(/\b(Còn\s*tiếp|Hoàn\s*thành|Đang\s*ra|Đang cập nhật)\b/i);
+        if (stMatch) statusText = normalizeText(stMatch[1]);
+    }
+
+    // Mô tả từ og:description hoặc p đầu tiên đủ dài
     if (!desc) desc = normalizeText(doc.select("meta[property='og:description']").attr("content"));
     if (!desc) desc = normalizeText(doc.select("meta[name='description']").attr("content"));
     if (!desc || /^Nền tảng truyện thông minh/i.test(desc)) {
@@ -182,25 +190,32 @@ function execute(url) {
         for (var p = 0; p < ps.size(); p++) {
             var pt = normalizeText(ps.get(p).text());
             if (!pt || pt.length < 40) continue;
-            if (/^(Nền tảng truyện thông minh|Lối vào chính|Yêu cầu gỡ truyện)/i.test(pt)) continue;
+            if (/^(Nền tảng truyện thông minh|Lối vào chính|Yêu cầu gỡ truyện|Bỏ qua điều hướng)/i.test(pt)) continue;
             desc = pt;
             break;
         }
     }
     if (!desc) desc = title;
 
+    // Build thông tin
     var infoLines = [];
-    if (author) infoLines.push("Tác giả: " + author);
-    if (genres) infoLines.push("Thể loại: " + genres);
-    if (statusText) infoLines.push("Trạng thái: " + statusText);
+    if (author) infoLines.push(author);
+    if (genres) infoLines.push(genres);
+    if (statusText) infoLines.push(statusText);
+
+    // Xác định ongoing
+    var isOngoing = true;
+    if (statusText) {
+        isOngoing = !/ho[àa]n|complete[d]?|finished/i.test(statusText);
+    }
 
     return Response.success({
         name: title,
         cover: cover,
         author: author,
         description: desc,
-        detail: infoLines.join("<br>"),
-        ongoing: statusText ? !/ho[àa]n|complete|completed|finished/i.test(statusText) : true,
+        detail: infoLines.join("\n"),
+        ongoing: isOngoing,
         host: HOST
     });
 }
