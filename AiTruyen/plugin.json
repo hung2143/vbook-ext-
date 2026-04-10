@@ -2,9 +2,10 @@
   "metadata": {
     "name": "AI Truyện",
     "author": "Hung",
-    "version": 1,
+    "version": 2,
     "source": "https://aitruyen.net/",
-    "regexp": "(www\\.)?aitruyen\\.net/(truyen/[^/?#]+/?)(\\?.*)?$",
+    "icon": "icon.png",
+    "regexp": "(www\\\\.)?aitruyen\\\\.net/(truyen/[^/?#]+/?)(\\\\?.*)?$",
     "description": "Đọc truyện trên trang https://aitruyen.net/ (yêu cầu đăng nhập tại trang nguồn)",
     "locale": "vi_VN",
     "language": "javascript",

@@ -2,7 +2,7 @@
 // URL dạng: https://aitruyen.net/truyen/[slug]/chuong-[n]
 //
 // QUAN TRỌNG: AiTruyen yêu cầu đăng nhập để đọc nội dung chương.
-// Plugin sẽ dùng cookie từ phiên đăng nhập của người dùng (nếu VBook hỗ trợ).
+// Nội dung chương được render bằng JavaScript phía client (Next.js).
 // Người dùng cần đăng nhập tại aitruyen.net trước (qua nút "Đăng nhập tại trang nguồn").
 
 var HOST = "https://aitruyen.net";
@@ -24,9 +24,8 @@ function cleanContent(html) {
     html = html.replace(/<style[\s\S]*?<\/style>/gi, "");
     // Xóa form, quảng cáo, bình luận
     html = html.replace(/<form[\s\S]*?<\/form>/gi, "");
-    html = html.replace(/<div[^>]*class="[^"]*(?:comment|ads?|related|share|nav|footer|header|sidebar)[^"]*"[\s\S]*?<\/div>/gi, "");
     // Xóa điều hướng chương
-    html = html.replace(/<a[^>]*>[\s]*(?:Chương trước|Chương sau|Mục lục)[\s]*<\/a>/gi, "");
+    html = html.replace(/<a[^>]*>[\s]*(?:Chương trước|Chương sau|Mục lục|Chương liền kề)[\s]*<\/a>/gi, "");
     // Xóa copyright footer
     html = html.replace(/Copyright[\s\S]*$/i, "");
     return html;
@@ -41,92 +40,190 @@ function execute(url) {
 
     var chapUrl = HOST + "/truyen/" + storySlug + "/chuong-" + chapNum;
 
-    // === Thử API lấy nội dung chương ===
-    // API endpoint đã xác nhận: POST /api/chapters/[id]/content
-    // Nhưng cần chapter ID - thử lấy từ HTML trước
+    // === Phương pháp 1: Dùng Browser/WebView để lấy nội dung render bởi JS ===
+    // AiTruyen dùng Next.js, nội dung chương được load bằng JS phía client
+    // Cần browser engine để render
+    try {
+        var browser = Engine.newBrowser();
+        if (browser) {
+            browser.launch(chapUrl, 30000);
 
-    // === Lấy trang HTML chương ===
+            // Chờ trang load hoàn tất
+            var waitMs = 8000;
+            var start = new Date().getTime();
+            while (new Date().getTime() - start < waitMs) {}
+
+            // Thử lấy nội dung từ DOM đã render
+            var contentHtml = "";
+
+            // Chiến lược 1: Tìm container chứa nội dung chương
+            try {
+                var domResult = browser.callJs(
+                    "(function(){" +
+                    "var sels=[" +
+                    "'[class*=\"chapter-content\"]','[class*=\"chapter-body\"]'," +
+                    "'[class*=\"reader-content\"]','[class*=\"content-render\"]'," +
+                    "'[class*=\"reading\"]','[class*=\"prose\"]'," +
+                    "'article','main'" +
+                    "];" +
+                    "for(var i=0;i<sels.length;i++){" +
+                    "  try{var el=document.querySelector(sels[i]);" +
+                    "  if(!el)continue;" +
+                    "  var ps=el.querySelectorAll('p');" +
+                    "  if(ps.length>=3){" +
+                    "    var html='';" +
+                    "    for(var j=0;j<ps.length;j++){" +
+                    "      var t=ps[j].innerText.trim();" +
+                    "      if(t.length>2)html+='<p>'+t+'</p>';" +
+                    "    }" +
+                    "    if(html.length>100)return html;" +
+                    "  }" +
+                    "  }catch(e){}}" +
+                    "return '';" +
+                    "})()",
+                    10000
+                );
+                var domText = String(domResult && domResult.text ? domResult.text() : domResult || "");
+                if (domText.length > 100) contentHtml = domText;
+            } catch (e) { }
+
+            // Chiến lược 2: Lấy toàn bộ body text
+            if (!contentHtml || contentHtml.length < 100) {
+                try {
+                    var bodyResult = browser.callJs(
+                        "(function(){" +
+                        "var body=document.body;" +
+                        "if(!body)return '';" +
+                        "var text=body.innerText||'';" +
+                        "return text;" +
+                        "})()",
+                        8000
+                    );
+                    var bodyText = String(bodyResult && bodyResult.text ? bodyResult.text() : bodyResult || "");
+
+                    if (bodyText.length > 200) {
+                        // Trích nội dung truyện từ body text
+                        var lines = bodyText.split("\n");
+                        var goodLines = [];
+                        var BAD_LINES = /^(Trang chủ|Bỏ qua|Top tuần|Khám phá|Bảng xếp hạng|Tìm kiếm|Chương liền kề|Thảo luận khi đọc|Mặc định chỉ hiện|bình luận|phản hồi|Đăng nhập|Đăng ký|Login|TrướcChương|trướcSauChương|sau|Trước|Sau|Mục lục|Gợi ý|Lối vào chính|Yêu cầu gỡ|Góp ý|AI Truyện|Copyright|\d+\s*phản hồi|0 phản hồi)$/i;
+
+                        for (var li = 0; li < lines.length; li++) {
+                            var line = lines[li].trim();
+                            if (!line) continue;
+                            if (line.length < 5) continue;
+                            if (BAD_LINES.test(line)) continue;
+                            // Bỏ header: dòng quá ngắn hoặc chứa chỉ tên truyện
+                            if (line.length < 15 && /^(Chương\s+\d+|Chapter\s+\d+)$/i.test(line)) continue;
+                            // Bỏ navigation text
+                            if (/^(TrướcChương|trướcSau|Chương\s*sau|Chương\s*trước)/.test(line)) continue;
+                            // Content lines thường dài > 20 ký tự
+                            if (line.length > 20) {
+                                goodLines.push(line);
+                            }
+                        }
+
+                        if (goodLines.length >= 3) {
+                            var parts = [];
+                            for (var gi = 0; gi < goodLines.length; gi++) {
+                                parts.push("<p>" + goodLines[gi] + "</p>");
+                            }
+                            contentHtml = parts.join("\n");
+                        }
+                    }
+                } catch (e) { }
+            }
+
+            // Chiến lược 3: Lấy từ __NEXT_DATA__
+            if (!contentHtml || contentHtml.length < 100) {
+                try {
+                    var nextResult = browser.callJs(
+                        "(function(){var el=document.getElementById('__NEXT_DATA__');return el?el.textContent:''})()",
+                        5000
+                    );
+                    var nextText = String(nextResult && nextResult.text ? nextResult.text() : nextResult || "");
+                    if (nextText.length > 50) {
+                        var nd = JSON.parse(nextText);
+                        var pp = nd && nd.props && nd.props.pageProps;
+                        if (pp) {
+                            var chapter = pp.chapter || pp.data || {};
+                            var content = chapter.content || chapter.text || "";
+                            if (content && content.length > 50) {
+                                contentHtml = "<p>" + content.replace(/\n/g, "</p><p>") + "</p>";
+                            }
+                        }
+                    }
+                } catch (e) { }
+            }
+
+            try { browser.close(); } catch (_) { }
+
+            if (contentHtml && stripHtml(contentHtml).length > 50) {
+                contentHtml = cleanContent(contentHtml);
+                return Response.success(contentHtml);
+            }
+        }
+    } catch (e) {
+        // Browser không khả dụng hoặc lỗi, fallback sang HTML scraping
+    }
+
+    // === Phương pháp 2: HTML scraping trực tiếp (hạn chế vì Next.js render phía client) ===
     var response = fetch(chapUrl, {
         headers: {
             "user-agent": UserAgent.chrome(),
             "referer": HOST + "/truyen/" + storySlug,
-            // Cookie sẽ được VBook tự động thêm vào nếu người dùng đã đăng nhập
             "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "accept-language": "vi-VN,vi;q=0.9,en;q=0.8"
         }
     });
 
     if (!response.ok) {
-        // Lỗi 401/403: chưa đăng nhập
         if (response.status === 401 || response.status === 403) {
-            return Response.success(
-                "<p><strong>⚠️ Bạn cần đăng nhập tại trang nguồn để đọc chương này.</strong></p>" +
-                "<p>Vui lòng nhấn nút <strong>Đăng nhập tại trang nguồn</strong> trong ứng dụng, " +
-                "đăng nhập vào tài khoản aitruyen.net rồi thử lại.</p>"
-            );
+            // Chưa đăng nhập - trả về URL trang nguồn để VBook hiện nút đăng nhập
+            return Response.error(chapUrl);
         }
-        return null;
+        return Response.error(chapUrl);
     }
 
     var doc = response.html("utf-8");
-    if (!doc) return null;
+    if (!doc) return Response.error(chapUrl);
 
     var pageHtml = doc.html() || "";
 
-    // Kiểm tra xem có bị yêu cầu đăng nhập không
-    var loginGate = pageHtml.indexOf("đăng nhập để") >= 0 || pageHtml.indexOf("login to") >= 0
-        || pageHtml.indexOf("Đăng Nhập Để Đọc") >= 0;
-    if (loginGate) {
-        // Kiểm tra an toàn hơn bằng cách xem nội dung thực sự có không
-        var contentCheck = doc.select("p").size();
-        if (contentCheck < 3) {
-            return Response.success(
-                "<p><strong>⚠️ Bạn cần đăng nhập tại trang aitruyen.net để đọc chương này.</strong></p>" +
-                "<p>Vui lòng nhấn nút <strong>Đăng nhập tại trang nguồn</strong> để đăng nhập, " +
-                "sau đó quay lại đọc truyện.</p>" +
-                "<p><em>Lưu ý: Một số chương có thể yêu cầu thêm xu để mở khóa.</em></p>"
-            );
-        }
-    }
+    // Thử lấy nội dung từ __NEXT_DATA__
+    try {
+        var nextDataEl = doc.select("script#__NEXT_DATA__").first();
+        if (nextDataEl) {
+            var nextJson = nextDataEl.html();
+            if (nextJson && nextJson.length > 10) {
+                var nd = JSON.parse(nextJson);
+                var pp = nd && nd.props && nd.props.pageProps;
+                if (pp) {
+                    // Tìm chapter content
+                    var chapter = pp.chapter || pp.data || {};
+                    var content = chapter.content || chapter.text || chapter.body || "";
 
-    // === Thử lấy chapter ID từ __NEXT_DATA__ để gọi API ===
-    var chapterId = "";
-    var nextDataMatch = pageHtml.match(/"id"\s*:\s*"?(\d+)"?\s*,\s*"(?:number|chapterNumber|chapter_number)"\s*:\s*"?/) ||
-        pageHtml.match(/"chapterId"\s*:\s*"?(\w+)"?/) ||
-        pageHtml.match(/"chapter"\s*:\s*\{[^}]*"id"\s*:\s*"?(\w+)"?/);
-    if (nextDataMatch) chapterId = nextDataMatch[1];
+                    if (typeof content === "string" && content.length > 100) {
+                        var html = "<p>" + content.replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>") + "</p>";
+                        html = cleanContent(html);
+                        if (stripHtml(html).length > 50) {
+                            return Response.success(html);
+                        }
+                    }
 
-    // Nếu có chapter ID, thử API
-    if (chapterId) {
-        var apiUrl = HOST + "/api/chapters/" + chapterId + "/content";
-        var apiResp = fetch(apiUrl, {
-            headers: {
-                "user-agent": UserAgent.chrome(),
-                "referer": chapUrl,
-                "accept": "application/json"
-            }
-        });
-        if (apiResp.ok) {
-            try {
-                var json = apiResp.json();
-                var content = json.content || json.data || json.text || "";
-                if (typeof content === "string" && content.length > 100) {
-                    content = cleanContent(content);
-                    if (stripHtml(content).length > 50) {
-                        return Response.success(content);
+                    // Kiểm tra xem content có bị mã hóa hoặc yêu cầu đăng nhập không
+                    if (chapter.requireLogin || pp.requireLogin || pp.requireAuth) {
+                        return Response.error(chapUrl);
                     }
                 }
-            } catch (e) { /* thử HTML scraping */ }
+            }
         }
-    }
+    } catch (e) { }
 
-    // === HTML scraping: tìm nội dung chính ===
+    // Tìm nội dung từ DOM (khó vì Next.js render phía client)
     var html = "";
 
-    // Tìm container nội dung chương
-    // AiTruyen dùng Next.js, nội dung thường trong một div chứa các thẻ p
-    // Selector tốt nhất: tìm div có nhiều thẻ p nhất (thường là nội dung chương)
-    var containers = doc.select("main div, article div, [class*='chapter'] div, [class*='content'] div, [id*='chapter'], [id*='content']");
+    // Tìm container chứa nội dung chương
+    var containers = doc.select("main div, article div, [class*='chapter'] div, [class*='content'] div");
     var bestContainer = null;
     var bestPCount = 0;
 
@@ -141,11 +238,10 @@ function execute(url) {
 
     if (bestContainer && bestPCount >= 3) {
         html = bestContainer.html() || "";
-        // Loại bỏ nội dung không liên quan
         html = cleanContent(html);
     }
 
-    // Fallback: ghép từ các thẻ p trong main/article
+    // Fallback: ghép từ các thẻ p
     if (!html || stripHtml(html).length < 100) {
         var paragraphs = doc.select("main p, article p, [class*='chapter'] p, [class*='content'] p");
         if (paragraphs.size() === 0) {
@@ -153,10 +249,13 @@ function execute(url) {
         }
         var parts = [];
         var skippedKeywords = [
-            /^(?:Mục lục|Chương trước|Chương sau|Đăng nhập|Đăng ký)$/i,
+            /^(?:Mục lục|Chương trước|Chương sau|Đăng nhập|Đăng ký|Chương liền kề)$/i,
             /^(?:Prev|Next|Table of contents|Login|Register)$/i,
             /^(?:\d+|Trang \d+)$/,
-            /^A[\+\-]$/, // font size controls
+            /^A[\+\-]$/,
+            /^(?:Thảo luận khi đọc|Mặc định chỉ hiện)$/i,
+            /^(?:TrướcChương|trướcSauChương|sau)$/,
+            /^\d+\s*phản hồi$/i
         ];
 
         for (var pi = 0; pi < paragraphs.size(); pi++) {
@@ -178,15 +277,15 @@ function execute(url) {
         }
     }
 
-    // Nếu vẫn không có nội dung
-    if (!html || stripHtml(html).length < 100) {
-        return Response.success(
-            "<p><strong>⚠️ Không tải được nội dung chương.</strong></p>" +
-            "<p>Có thể bạn cần <strong>đăng nhập tại trang nguồn</strong> để đọc chương này. " +
-            "Vui lòng đăng nhập vào tài khoản aitruyen.net và thử lại.</p>"
-        );
+    // Nếu có nội dung hợp lệ
+    if (html && stripHtml(html).length > 100) {
+        html = cleanContent(html);
+        return Response.success(html);
     }
 
-    html = cleanContent(html);
-    return Response.success(html);
+    // === Không tải được nội dung ===
+    // AiTruyen yêu cầu đăng nhập và nội dung render bằng JS phía client
+    // Trả về Response.error(url) để VBook hiện nút "Ấn vào trang nguồn" cho người dùng
+    // đăng nhập rồi quay lại tải lại
+    return Response.error(chapUrl);
 }

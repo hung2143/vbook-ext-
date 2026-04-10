@@ -1,5 +1,6 @@
 // toc.js - Lấy danh sách chương (Table of Contents) của một truyện trên AiTruyen
 // URL dạng: https://aitruyen.net/truyen/[slug]
+// Phân trang chương dùng: ?chapterPage=N&chapterOrder=asc#danh-sach-chuong
 var HOST = "https://aitruyen.net";
 
 function normalizeUrl(link) {
@@ -19,63 +20,9 @@ function execute(url) {
     var result = [];
     var seen = {};
 
-    // === Thử API tìm danh sách chương ===
-    // AiTruyen có thể expose API kiểu /api/stories/[slug]/chapters hoặc /api/chapters?story=[slug]
-    var apiTries = [
-        HOST + "/api/stories/" + encodeURIComponent(slug) + "/chapters?page=1&limit=1000&sort=asc",
-        HOST + "/api/stories/" + encodeURIComponent(slug) + "/chapters?orderby=asc",
-        HOST + "/api/chapters?story=" + encodeURIComponent(slug) + "&page=1&limit=500"
-    ];
-
-    for (var ai = 0; ai < apiTries.length; ai++) {
-        var apiResp = fetch(apiTries[ai], {
-            headers: {
-                "user-agent": UserAgent.chrome(),
-                "referer": storyUrl,
-                "accept": "application/json"
-            }
-        });
-        if (!apiResp.ok) continue;
-        try {
-            var json = apiResp.json();
-            var chapters = json.data || json.chapters || json.items || json.results || [];
-            if (chapters && chapters.length > 0) {
-                for (var ci = 0; ci < chapters.length; ci++) {
-                    var ch = chapters[ci];
-                    // Xây dựng URL chương
-                    var chapSlug = ch.slug || ("chuong-" + (ch.number || ch.chapterNumber || ch.index || ci + 1));
-                    var chapUrl = storyUrl + "/" + chapSlug;
-                    if (ch.url) chapUrl = normalizeUrl(ch.url);
-                    var chapName = ch.title || ch.name || ("Chương " + (ch.number || ci + 1));
-                    if (seen[chapUrl]) continue;
-                    seen[chapUrl] = true;
-                    result.push({
-                        name: chapName,
-                        url: chapUrl,
-                        host: HOST
-                    });
-                }
-                if (result.length > 0) return Response.success(result);
-            }
-        } catch (e) { /* thử tiếp */ }
-    }
-
-    // === Fallback: HTML scraping - lấy danh sách chương từ trang truyện ===
-    // AiTruyen dùng Next.js, danh sách chương có thể phân trang
-    // Thử lấy tất cả chương qua phân trang HTML
-
-    function fetchChaptersFromPage(pageUrl) {
-        var resp = fetch(pageUrl, {
-            headers: {
-                "user-agent": UserAgent.chrome(),
-                "referer": HOST + "/"
-            }
-        });
-        if (!resp.ok) return [];
-
-        var doc = resp.html("utf-8");
+    // Hàm scrape danh sách chương từ HTML của một trang
+    function scrapeChaptersFromDoc(doc) {
         var pageResult = [];
-
         // Lấy tất cả link chương: href="/truyen/slug/chuong-N"
         var chapAnchors = doc.select("a[href*='/chuong-']");
         for (var ci = 0; ci < chapAnchors.size(); ci++) {
@@ -87,17 +34,38 @@ function execute(url) {
             var chapUrl = normalizeUrl(href);
             if (seen[chapUrl]) continue;
 
-            // Tên chương: ưu tiên thẻ p hoặc span bên trong, hoặc text của thẻ a
+            // Tên chương: ưu tiên text trực tiếp chứa "Chương"
             var chapName = "";
-            var pEl = a.select("p, span").first();
-            if (pEl) chapName = pEl.text().trim();
-            if (!chapName) chapName = a.text().trim();
+            // Tìm trong thẻ p hoặc span bên trong anchor
+            var innerEls = a.select("p, span, div");
+            for (var ie = 0; ie < innerEls.size(); ie++) {
+                var innerText = innerEls.get(ie).text().trim();
+                if (innerText && innerText.indexOf("Chương") >= 0) {
+                    chapName = innerText;
+                    break;
+                }
+            }
             if (!chapName) {
-                // Trích số chương từ URL
+                // Fallback: text của anchor
+                var fullText = a.text().trim();
+                // Text thường chứa: "115Chương 115: Lão nhân gia lễ vật07/03/2026•1.9K chữ..."
+                // Tách ra: bỏ số đầu, giữ phần "Chương N: ..."
+                var chapMatch = fullText.match(/(Chương\s+\d+[^•]*)/);
+                if (chapMatch) {
+                    chapName = chapMatch[1].trim();
+                    // Loại bỏ phần ngày tháng cuối nếu có
+                    chapName = chapName.replace(/\d{2}\/\d{2}\/\d{4}.*$/, "").trim();
+                } else {
+                    chapName = fullText;
+                }
+            }
+            if (!chapName) {
                 var numMatch = href.match(/chuong-(\d+)/);
                 chapName = numMatch ? "Chương " + numMatch[1] : href;
             }
             chapName = chapName.replace(/\s+/g, " ").trim();
+            // Loại bỏ nếu chỉ là số hoặc quá ngắn
+            if (!chapName || chapName.length < 2) continue;
 
             seen[chapUrl] = true;
             pageResult.push({
@@ -106,55 +74,93 @@ function execute(url) {
                 host: HOST
             });
         }
-
         return pageResult;
     }
 
-    // Lấy trang đầu tiên
-    var page1Chapters = fetchChaptersFromPage(storyUrl);
-    for (var i = 0; i < page1Chapters.length; i++) {
-        result.push(page1Chapters[i]);
+    // Hàm fetch và scrape một trang chương
+    function fetchChapterPage(pageNum) {
+        var pageUrl;
+        if (pageNum <= 1) {
+            pageUrl = storyUrl + "?chapterOrder=asc#danh-sach-chuong";
+        } else {
+            pageUrl = storyUrl + "?chapterPage=" + pageNum + "&chapterOrder=asc#danh-sach-chuong";
+        }
+
+        var resp = fetch(pageUrl, {
+            headers: {
+                "user-agent": UserAgent.chrome(),
+                "referer": storyUrl
+            }
+        });
+        if (!resp.ok) return [];
+
+        var doc = resp.html("utf-8");
+        if (!doc) return [];
+        return scrapeChaptersFromDoc(doc);
     }
 
-    // Kiểm tra xem có phân trang chương không
-    // AiTruyen thường có nút phân trang cho danh sách chương nếu > 50 chương
-    var resp1 = fetch(storyUrl, {
+    // === Bước 1: Fetch trang đầu tiên (sắp xếp từ cũ nhất) ===
+    var firstPageUrl = storyUrl + "?chapterOrder=asc#danh-sach-chuong";
+    var firstResp = fetch(firstPageUrl, {
         headers: {
             "user-agent": UserAgent.chrome(),
             "referer": HOST + "/"
         }
     });
 
-    if (resp1.ok) {
-        var doc1 = resp1.html("utf-8");
-        var pageHtml = doc1.html() || "";
+    if (!firstResp.ok) return Response.success([]);
 
-        // Tìm tổng số trang chương
-        // Tìm số trang qua URL /truyen/slug?page=N hoặc các nút phân trang
-        var maxPage = 1;
-        var pageLinks = doc1.select("a[href*='?page='], a[href*='&page=']");
-        for (var pl = 0; pl < pageLinks.size(); pl++) {
-            var plHref = pageLinks.get(pl).attr("href") || "";
-            var pMatch = plHref.match(/page=(\d+)/);
-            if (pMatch) {
-                var pNum = parseInt(pMatch[1], 10);
-                if (pNum > maxPage) maxPage = pNum;
-            }
-        }
+    var firstDoc = firstResp.html("utf-8");
+    if (!firstDoc) return Response.success([]);
 
-        // Nếu có nhiều trang, lấy từ trang 2 trở đi
-        for (var pg = 2; pg <= maxPage; pg++) {
-            var pgUrl = storyUrl + "?page=" + pg;
-            var pgChapters = fetchChaptersFromPage(pgUrl);
-            for (var pi = 0; pi < pgChapters.length; pi++) {
-                result.push(pgChapters[pi]);
-            }
-            // Giới hạn an toàn
-            if (pg > 100) break;
+    // Lấy chương từ trang 1
+    var page1Chapters = scrapeChaptersFromDoc(firstDoc);
+    for (var i = 0; i < page1Chapters.length; i++) {
+        result.push(page1Chapters[i]);
+    }
+
+    // === Bước 2: Tìm tổng số trang chương ===
+    var maxPage = 1;
+    // Tìm các link phân trang chương: ?chapterPage=N
+    var pageLinks = firstDoc.select("a[href*='chapterPage=']");
+    for (var pl = 0; pl < pageLinks.size(); pl++) {
+        var plHref = pageLinks.get(pl).attr("href") || "";
+        var pMatch = plHref.match(/chapterPage=(\d+)/);
+        if (pMatch) {
+            var pNum = parseInt(pMatch[1], 10);
+            if (pNum > maxPage) maxPage = pNum;
         }
     }
 
-    // Sắp xếp theo số chương tăng dần (phòng trường hợp trang hiển thị ngược)
+    // Cũng thử tìm từ text "Đang xem X - Y trong tổng Z chương"
+    var pageHtml = firstDoc.html() || "";
+    var totalMatch = pageHtml.match(/trong tổng\s+([\d.,]+K?)\s*chương/i);
+    if (totalMatch && maxPage <= 1) {
+        var totalStr = totalMatch[1].replace(/\./g, "").replace(",", ".");
+        var totalChapters = 0;
+        if (totalStr.indexOf("K") >= 0) {
+            totalChapters = Math.ceil(parseFloat(totalStr.replace("K", "")) * 1000);
+        } else {
+            totalChapters = parseInt(totalStr, 10);
+        }
+        if (totalChapters > 0 && page1Chapters.length > 0) {
+            maxPage = Math.ceil(totalChapters / page1Chapters.length);
+        }
+    }
+
+    // === Bước 3: Fetch các trang còn lại ===
+    for (var pg = 2; pg <= maxPage; pg++) {
+        var pgChapters = fetchChapterPage(pg);
+        for (var pi = 0; pi < pgChapters.length; pi++) {
+            result.push(pgChapters[pi]);
+        }
+        // Nếu trang trả về 0 kết quả, dừng lại
+        if (pgChapters.length === 0) break;
+        // Giới hạn an toàn 500 trang (tối đa ~12000 chương)
+        if (pg > 500) break;
+    }
+
+    // Sắp xếp theo số chương tăng dần
     result.sort(function(a, b) {
         var numA = parseInt((a.url.match(/chuong-(\d+)/) || [0, 0])[1], 10);
         var numB = parseInt((b.url.match(/chuong-(\d+)/) || [0, 0])[1], 10);
