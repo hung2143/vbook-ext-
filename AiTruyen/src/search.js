@@ -113,15 +113,19 @@ function execute(key, page) {
             }
         }
 
-        // Lấy mô tả ngắn từ container
+        // Lấy mô tả ngắn từ container (bọc try-catch vì .parent() có thể lỗi trên Next.js elements)
         var desc = "";
-        var parent = a.parent();
-        if (parent) {
-            var ps = parent.select("p");
-            for (var pi = 0; pi < ps.size(); pi++) {
-                var pText = ps.get(pi).text().trim();
-                if (pText && pText.length > 20) { desc = pText; break; }
+        try {
+            var parent = a.parent();
+            if (parent) {
+                var ps = parent.select("p");
+                for (var pi = 0; pi < ps.size(); pi++) {
+                    var pText = ps.get(pi).text().trim();
+                    if (pText && pText.length > 20) { desc = pText; break; }
+                }
             }
+        } catch (e) {
+            // Bỏ qua nếu parent() lỗi
         }
 
         pushNovel(href, aName, cover, desc);
