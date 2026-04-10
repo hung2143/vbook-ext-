@@ -26,6 +26,17 @@
       "description": "Đọc truyện trên trang https://khotruyenchu.click/",
       "type": "novel",
       "locale": "vi_VN"
+    },
+    {
+      "name": "AI Truyện",
+      "author": "Hung",
+      "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/AiTruyen/plugin.zip",
+      "version": 1,
+      "source": "https://aitruyen.net/",
+      "icon": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/AiTruyen/icon.png",
+      "description": "Đọc truyện trên trang https://aitruyen.net/ (yêu cầu đăng nhập tại trang nguồn)",
+      "type": "novel",
+      "locale": "vi_VN"
     }
   ]
 }
