@@ -43,6 +43,19 @@ function execute(url, page) {
         });
     }
 
+    function extractImgCover(el) {
+        if (!el) return "";
+        var src = el.attr("src") || el.attr("data-src") || "";
+        if (!src) {
+            // Next.js Image renders srcset; grab first URL entry
+            var srcset = el.attr("srcset") || "";
+            if (srcset) {
+                src = srcset.split(",")[0].trim().split(/\s+/)[0] || "";
+            }
+        }
+        return normalizeCover(src);
+    }
+
     var listUrl = (url && url.indexOf("page=") >= 0)
         ? url + pageNum
         : HOST + "/?page=" + pageNum;
@@ -59,8 +72,24 @@ function execute(url, page) {
     var doc = response.html("utf-8");
     if (!doc) return Response.success([], null);
 
-    // Phương pháp 1: <a href="/truyen/..."> chứa <h3>
-    // Dùng :has(h3) thay vì .parent() (vBook JS runtime không hỗ trợ .parent())
+    // Bước 1: Xây dựng bản đồ slug -> cover từ tất cả link ảnh trên trang.
+    // Aitruyen.net dùng cấu trúc: <a href="/truyen/slug"><img .../></a> (link ảnh)
+    // và <a href="/truyen/slug"><h3>Tên</h3></a> (link tiêu đề) là hai phần tử khác nhau.
+    var coverMap = {};
+    var imgLinks = doc.select("a[href*='/truyen/']:has(img)");
+    for (var ci = 0; ci < imgLinks.size(); ci++) {
+        var imgLink = imgLinks.get(ci);
+        var ilHref = imgLink.attr("href") || "";
+        if (!ilHref || ilHref.indexOf("/chuong-") >= 0) continue;
+        var slugM = ilHref.match(/\/truyen\/([^/?#]+)/);
+        if (!slugM) continue;
+        var slug = slugM[1];
+        if (coverMap[slug]) continue;
+        var ilCover = extractImgCover(imgLink.select("img").first());
+        if (ilCover) coverMap[slug] = ilCover;
+    }
+
+    // Bước 2: Tìm các thẻ link tiêu đề chứa <h3> và ghép với cover từ bản đồ trên.
     var cards = doc.select("a[href*='/truyen/']:has(h3)");
     for (var i = 0; i < cards.size(); i++) {
         var card = cards.get(i);
@@ -73,12 +102,10 @@ function execute(url, page) {
         if (!name || name.length < 2) continue;
         if (/^(Truyện mới|Truyện hot|Truyện hoàn|Bảng xếp|Gợi ý|Chương mới|Có thể|KỆ SÁCH|BẢNG XẾP|BIÊN TẬP|NHỮNG BỘ)/i.test(name)) continue;
 
-        var imgEl = card.select("img").first();
-        var cover = "";
-        if (imgEl) {
-            cover = imgEl.attr("src") || imgEl.attr("data-src") || "";
-            cover = normalizeCover(cover);
-        }
+        // Ưu tiên cover từ bản đồ (lấy từ link ảnh sibling), fallback sang img trực tiếp
+        var slugM2 = href.match(/\/truyen\/([^/?#]+)/);
+        var storySlug = slugM2 ? slugM2[1] : "";
+        var cover = (storySlug && coverMap[storySlug]) || extractImgCover(card.select("img").first());
         pushNovel(href, name, cover);
     }
 
@@ -97,12 +124,9 @@ function execute(url, page) {
             if (!aName || aName.length < 2 || aName.length > 200) continue;
             if (/^(Mở truyện|Chương mới|Vào trang|Đọc chương|Xem bảng|Đọc từ đầu|Vào chương|Chương sau|Chương trước|Về trang chủ|Tìm truyện)$/i.test(aName)) continue;
 
-            var aImgEl = a.select("img").first();
-            var aCover = "";
-            if (aImgEl) {
-                aCover = aImgEl.attr("src") || aImgEl.attr("data-src") || "";
-                aCover = normalizeCover(aCover);
-            }
+            var aSlugM = ahref.match(/\/truyen\/([^/?#]+)/);
+            var aSlug = aSlugM ? aSlugM[1] : "";
+            var aCover = (aSlug && coverMap[aSlug]) || extractImgCover(a.select("img").first());
             pushNovel(ahref, aName, aCover);
         }
     }

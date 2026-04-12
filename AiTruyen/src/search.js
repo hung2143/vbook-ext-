@@ -81,6 +81,38 @@ function execute(key, page) {
 
     var doc = response.html("utf-8");
 
+    function extractImgCover(img) {
+        if (!img) return "";
+        var src = img.attr("src") || img.attr("data-src") || "";
+        if (!src) {
+            var srcset = img.attr("srcset") || "";
+            if (srcset) src = srcset.split(",")[0].trim().split(/\s+/)[0] || "";
+        }
+        if (!src) return "";
+        if (src.indexOf("/_next/image") >= 0) {
+            var urlParam = src.match(/url=([^&]+)/);
+            if (urlParam) src = decodeURIComponent(urlParam[1]);
+        }
+        if (src.indexOf("//") === 0) return "https:" + src;
+        if (src.indexOf("http") !== 0) return HOST + src;
+        return src;
+    }
+
+    // Bước 1: Xây dựng bản đồ slug -> cover từ tất cả link ảnh
+    var coverMap = {};
+    var imgLinks = doc.select("a[href*='/truyen/']:has(img)");
+    for (var ci = 0; ci < imgLinks.size(); ci++) {
+        var imgLink = imgLinks.get(ci);
+        var ilHref = imgLink.attr("href") || "";
+        if (!ilHref || ilHref.indexOf("/chuong-") >= 0) continue;
+        var slugM = ilHref.match(/\/truyen\/([^/?#]+)/);
+        if (!slugM) continue;
+        var slug = slugM[1];
+        if (coverMap[slug]) continue;
+        var ilCover = extractImgCover(imgLink.select("img").first());
+        if (ilCover) coverMap[slug] = ilCover;
+    }
+
     // Lấy tất cả link truyện từ trang kết quả
     var anchors = doc.select("a[href*='/truyen/']");
     for (var k = 0; k < anchors.size(); k++) {
@@ -95,38 +127,19 @@ function execute(key, page) {
         if (!aName) aName = a.text();
         if (!aName) aName = a.attr("title") || "";
         if (!aName) {
-            var slug = href.split("/").filter(function(s) { return s; }).pop();
-            aName = decodeURIComponent((slug || "").replace(/-/g, " "));
+            var slug2 = href.split("/").filter(function(s) { return s; }).pop();
+            aName = decodeURIComponent((slug2 || "").replace(/-/g, " "));
         }
         aName = (aName || "").replace(/\s+/g, " ").trim();
         if (!aName) continue;
 
-        // Lấy cover
-        var cover = "";
-        var img = a.select("img").first();
-        if (img) {
-            cover = img.attr("src") || img.attr("data-src") || "";
-            // Xử lý URL Next.js image optimization
-            if (cover.indexOf("/_next/image") >= 0) {
-                var urlParam = cover.match(/url=([^&]+)/);
-                if (urlParam) cover = decodeURIComponent(urlParam[1]);
-            }
-        }
+        // Lấy cover: ưu tiên bản đồ cover (từ link ảnh sibling), rồi mới tìm img trực tiếp
+        var hrefSlugM = href.match(/\/truyen\/([^/?#]+)/);
+        var hrefSlug = hrefSlugM ? hrefSlugM[1] : "";
+        var cover = (hrefSlug && coverMap[hrefSlug]) || extractImgCover(a.select("img").first());
 
-        // Lấy mô tả ngắn từ container (bọc try-catch vì .parent() có thể lỗi trên Next.js elements)
+        // Lấy mô tả ngắn - không dùng .parent() vì vBook runtime không hỗ trợ
         var desc = "";
-        try {
-            var parent = a.parent();
-            if (parent) {
-                var ps = parent.select("p");
-                for (var pi = 0; pi < ps.size(); pi++) {
-                    var pText = ps.get(pi).text().trim();
-                    if (pText && pText.length > 20) { desc = pText; break; }
-                }
-            }
-        } catch (e) {
-            // Bỏ qua nếu parent() lỗi
-        }
 
         pushNovel(href, aName, cover, desc);
     }
