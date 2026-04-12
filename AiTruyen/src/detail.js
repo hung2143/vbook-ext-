@@ -137,16 +137,33 @@ function execute(url) {
         }
     }
 
-    // Tác giả và thể loại: Trên trang aitruyen.net, hiển thị dạng "Tên tác giả • Thể loại"
-    // Pattern này xuất hiện trong các thẻ text gần tiêu đề truyện
+    // Tác giả từ link tim-kiem?author=... (selector trực tiếp, không cần .parent())
+    if (!author) {
+        var authorLinks = doc.select("a[href*='tim-kiem?author='], a[href*='tim-kiem?author%']");
+        if (authorLinks.size() > 0) {
+            author = normalizeText(authorLinks.first().text());
+        }
+    }
+
+    // Thể loại từ link tim-kiem?genre= (nếu trang có)
+    if (!genres) {
+        var genreLinks = doc.select("a[href*='tim-kiem?genre='], a[href*='/the-loai/']");
+        if (genreLinks.size() > 0) {
+            var genArr = [];
+            for (var gi = 0; gi < genreLinks.size(); gi++) {
+                var gt = normalizeText(genreLinks.get(gi).text());
+                if (gt && genArr.indexOf(gt) < 0) genArr.push(gt);
+            }
+            genres = genArr.join(", ");
+        }
+    }
+
+    // Fallback: tìm pattern "tác giả • thể loại" trong DOM
     if (!author || !genres) {
-        // Tìm pattern "tác giả • thể loại" trong DOM
-        // Các thẻ span/p chứa bullet separator
         var allElements = doc.select("span, p, div");
         for (var ei = 0; ei < Math.min(allElements.size(), 200); ei++) {
             var el = allElements.get(ei);
             var elText = normalizeText(el.text());
-            // Bỏ qua elements quá dài (là description) hoặc quá ngắn
             if (!elText || elText.length < 3 || elText.length > 200) continue;
             // Tìm pattern: "text • text"
             var bulletMatch = elText.match(/^([^•\n]{2,60})\s*•\s*([^•\n]{2,80})$/);
