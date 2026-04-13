@@ -6,8 +6,26 @@
 // 2. Nếu có cookie → gọi API /api/chapters/{handle}/content
 // 3. Nếu API thất bại hoặc không có cookie → dùng Engine.newBrowser() render
 //    và dùng callJs() để trích chính xác nội dung các đoạn truyện
+//
+// Lưu ý quan trọng (2026-04-13):
+//   - Trang AiTruyen là React/Next.js app → CẦN busyWait() sau launch()
+//     để đợi React hydrate + API fetch nội dung chương
+//   - Có ÍT NHẤT 2 thẻ <article> trong DOM:
+//       article.mt-6       → chứa AI unlock notice, KHÔNG PHẢI nội dung
+//       article.reader-prose.rich-content → NỘI DUNG TRUYỆN THẬT
+//   - Selector chính xác: article.reader-prose hoặc [class*="rich-content"]
 
 var HOST = "https://aitruyen.net";
+
+/**
+ * Busy-wait: block thread trong ms milliseconds.
+ * Cần thiết vì Engine.newBrowser().launch() chỉ bắt đầu load,
+ * không đợi React/Next.js render xong.
+ */
+function busyWait(ms) {
+    var s = new Date().getTime();
+    while (new Date().getTime() - s < ms) {}
+}
 
 /**
  * Lấy cookie session từ localCookie (chia sẻ với Engine.newBrowser).
@@ -73,55 +91,68 @@ function callContentApi(chapUrl, chapterHandle, cookieStr) {
 /**
  * Dùng Engine.newBrowser() để render trang rồi dùng callJs() trích nội dung.
  *
- * Cấu trúc DOM đã xác nhận (debug thực tế 2026-04-13):
- *   - Nội dung chương nằm trong: article.reader-prose.rich-content
- *   - Các thẻ <p> con trực tiếp của article đó = nội dung truyện sạch 100%
- *   - Không cần filter junk nếu dùng đúng selector
+ * DOM structure đã xác nhận qua browser debug (2026-04-13):
+ *   - article.mt-6  → chứa AI unlock notice, header → KHÔNG LẤY
+ *   - article.reader-prose.rich-content → NỘI DUNG TRUYỆN → LẤY CÁI NÀY
+ *   - Bên trong có các <p> tags = từng đoạn văn → lấy trực tiếp
  *
- * VBook cần nhận HTML với <p> tags để render đúng xuống hàng.
+ * QUAN TRỌNG: Phải dùng busyWait() sau launch() vì:
+ *   browser.launch(url, timeout) chỉ bắt đầu load trang
+ *   React/Next.js cần thêm thời gian để hydrate + fetch nội dung từ API
+ *   Không busyWait → callJs chạy trên DOM chưa render → không tìm thấy element
  */
 function loadViaNewBrowser(chapUrl) {
     var browser = null;
     try {
         browser = Engine.newBrowser();
-        browser.launch(chapUrl, 12000);
+        browser.launch(chapUrl, 30000);
 
-        // JS cực kỳ đơn giản: chỉ lấy innerHTML của article.reader-prose
-        // Nếu không có, fallback lấy các <p> có parent là article
+        // CHỜ React render xong - đây là bước THIẾU trước đây
+        // AiTruyen cần: page load + React hydrate + API fetch content
+        busyWait(8000);
+
+        // JS đơn giản: tìm đúng article.reader-prose, lấy innerHTML
         var jsCode = "(function(){" +
-            // Cách 1: Selector chính xác nhất
+            // Tìm article.reader-prose (nội dung truyện sạch)
             "var art=document.querySelector('article.reader-prose');" +
             "if(!art)art=document.querySelector('article[class*=\"reader-prose\"]');" +
             "if(!art)art=document.querySelector('[class*=\"rich-content\"]');" +
             "if(art){" +
-            // Lấy innerHTML trực tiếp — đã có sẵn <p> tags đúng format
-            "  var html=art.innerHTML;" +
-            "  if(html&&html.length>50)return html;" +
+            // Clone để xóa junk bên trong (nếu có)
+            "  var clone=art.cloneNode(true);" +
+            "  var junk=clone.querySelectorAll('script,style,svg,button,[role=\"button\"]');" +
+            "  for(var i=junk.length-1;i>=0;i--){try{junk[i].parentNode.removeChild(junk[i]);}catch(e){}}" +
+            // Lấy các <p> tags → HTML output với xuống hàng đúng
+            "  var ps=clone.querySelectorAll('p');" +
+            "  if(ps.length>=2){" +
+            "    var res=[];" +
+            "    for(var i=0;i<ps.length;i++){" +
+            "      var txt=(ps[i].innerText||'').trim();" +
+            "      if(txt.length>0)res.push('<p>'+txt+'</p>');" +
+            "    }" +
+            "    if(res.length>=2)return res.join('\\n');" +
+            "  }" +
+            // Fallback: lấy innerHTML trực tiếp
+            "  var h=clone.innerHTML;" +
+            "  if(h&&h.length>50)return h;" +
             "}" +
-            // Cách 2: Fallback — lấy từng <p> có parent là article
-            "var ps=document.querySelectorAll('article p');" +
-            "var res=[];" +
-            "for(var i=0;i<ps.length;i++){" +
-            "  var txt=(ps[i].innerText||'').trim();" +
-            "  if(txt.length<10)continue;" +
-            "  res.push('<p>'+txt+'</p>');" +
+            // Fallback 2: không tìm thấy reader-prose → thử aria-live
+            "var live=document.querySelector('[aria-live]');" +
+            "if(live){" +
+            "  var ps2=live.querySelectorAll('p');" +
+            "  if(ps2.length>=2){" +
+            "    var res2=[];" +
+            "    for(var j=0;j<ps2.length;j++){" +
+            "      var t2=(ps2[j].innerText||'').trim();" +
+            "      if(t2.length>0)res2.push('<p>'+t2+'</p>');" +
+            "    }" +
+            "    if(res2.length>=2)return res2.join('\\n');" +
+            "  }" +
             "}" +
-            "if(res.length>=3)return res.join('\\n');" +
-            // Cách 3: Last resort — article innerText tách theo dòng
-            "var artEl=document.querySelector('article');" +
-            "if(!artEl)return '';" +
-            "var raw=(artEl.innerText||'').trim();" +
-            "if(raw.length<50)return '';" +
-            "var lines=raw.split('\\n');" +
-            "res=[];" +
-            "for(var j=0;j<lines.length;j++){" +
-            "  var ln=lines[j].trim();" +
-            "  if(ln.length>=15)res.push('<p>'+ln+'</p>');" +
-            "}" +
-            "return res.join('\\n');" +
+            "return '';" +
             "})()";
 
-        var result = browser.callJs(jsCode, 8000);
+        var result = browser.callJs(jsCode, 10000);
         var content = "";
         if (result) {
             try { content = result.text ? String(result.text()) : String(result); }
@@ -142,23 +173,15 @@ function loadViaNewBrowser(chapUrl) {
 
 /**
  * Làm sạch HTML trả về từ browser:
- * - Xóa script/style tags
- * - Xóa buttons, svg, hidden elements
+ * - Xóa script/style/svg/button tags
  * - Giữ nguyên <p> tags và nội dung text
  */
 function cleanBrowserContent(html) {
     if (!html) return "";
-    // Xóa script/style
     html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
     html = html.replace(/<style[\s\S]*?<\/style>/gi, "");
-    // Xóa svg
     html = html.replace(/<svg[\s\S]*?<\/svg>/gi, "");
-    // Xóa button
     html = html.replace(/<button[\s\S]*?<\/button>/gi, "");
-    // Xóa div[aria-hidden]
-    html = html.replace(/<[^>]+aria-hidden="true"[\s\S]*?<\/[^>]+>/gi, "");
-    // Xóa các phần tử animate-pulse (skeleton loader)
-    html = html.replace(/<[^>]+animate-pulse[\s\S]*?<\/[^>]+>/gi, "");
     return html.trim();
 }
 
