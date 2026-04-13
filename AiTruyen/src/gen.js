@@ -20,8 +20,9 @@ function execute(url, page) {
     var pageNum = parseInt(page, 10);
     if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
 
-    // Xây URL dạng: https://aitruyen.net/bang-xep-hang?type=thinh-hanh&page=1
-    var listUrl = HOST + "/bang-xep-hang" + url + "&page=" + pageNum;
+    // Xây URL: ?genre=... → /tim-kiem, ?type=... → /bang-xep-hang
+    var basePath = url.indexOf("?genre=") >= 0 ? "/tim-kiem" : "/bang-xep-hang";
+    var listUrl = HOST + basePath + url + "&page=" + pageNum;
 
     var response = fetch(listUrl, {
         headers: {
