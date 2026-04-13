@@ -3,7 +3,7 @@
 function execute() {
     return Response.success([
         {
-            title: "Truyện mới cập nhật",
+            title: "Truyện thịnh hành tuần",
             input: "https://aitruyen.net/?sort=latest&page=",
             script: "gen.js"
         },
