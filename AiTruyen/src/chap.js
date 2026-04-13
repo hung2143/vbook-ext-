@@ -71,138 +71,54 @@ function callContentApi(chapUrl, chapterHandle, cookieStr) {
 }
 
 /**
- * Kiểm tra xem một đoạn text có phải là junk (nav/UI/metadata) không.
- * Trả về true nếu là junk cần bỏ qua.
- */
-function isJunkLine(txt) {
-    if (!txt || txt.length < 2) return true;
-    // Tiêu đề chương dạng "Chương X: ..."
-    if (/^(Chương|Quyển|Tập|Chapter)\s+\d+[:\s·•]/i.test(txt)) return true;
-    // Breadcrumb / nav buttons
-    if (/^(Trang chủ|Chương trước|Chương sau|Mục lục|Thảo luận|Nghe|Công cụ)/i.test(txt)) return true;
-    // Ngày tháng đơn thuần: "01/11/2025" hoặc "22/01/2026"
-    if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(txt) && txt.length < 30) return true;
-    // Thời gian đọc: "9 phút đọc", "10 phút đọc"
-    if (/^\d+\s*(phút|giờ|giây)\s*(đọc)?$/i.test(txt)) return true;
-    // Dạng kết hợp "01/11/2025•9 phút đọc" hoặc "22/01/2026 • ..."
-    if (/\d{1,2}\/\d{1,2}\/\d{4}\s*[•·]\s*\d+\s*(phút|giờ)/.test(txt)) return true;
-    // AI badge: "AI Đang đọc bản convert", "Đang đọc bản AI", "Bản AI..."
-    if (/^(AI\s|Bản AI|Đang đọc bản|AI Truyện)/i.test(txt) && txt.length < 120) return true;
-    // "convert" riêng lẻ
-    if (/^(convert|bản convert)$/i.test(txt)) return true;
-    // Tab title dạng "10 • Chương 10: ..."
-    if (/^\d+\s*[•·]\s*(Chương|Quyển|Tập)/i.test(txt)) return true;
-    // Tên truyện kèm AI Truyện
-    if (/\|\s*AI Truyện\s*$/.test(txt)) return true;
-    // Chỉ chứa số, dấu gạch, dấu phẩy (không phải nội dung truyện)
-    if (/^[\d\s\/\-·•:,]+$/.test(txt)) return true;
-    return false;
-}
-
-/**
  * Dùng Engine.newBrowser() để render trang rồi dùng callJs() trích nội dung.
  *
- * CHIẾN LƯỢC MỚI (không phụ thuộc vào class name selector):
- *  1. Lấy TẤT CẢ thẻ <p> trong document
- *  2. Bỏ qua p nằm trong nav/footer/header/feed
- *  3. Bỏ qua p chứa link (breadcrumb)
- *  4. Filter bằng regex các pattern junk đã biết
- *  5. Chỉ lấy p đủ dài (>= 15 ký tự) là nội dung truyện thực sự
+ * Cấu trúc DOM đã xác nhận (debug thực tế 2026-04-13):
+ *   - Nội dung chương nằm trong: article.reader-prose.rich-content
+ *   - Các thẻ <p> con trực tiếp của article đó = nội dung truyện sạch 100%
+ *   - Không cần filter junk nếu dùng đúng selector
  *
- * Fallback: tìm article trong main, tách innerText theo đoạn văn (\n\n)
- *           và cũng áp dụng filter junk tương tự
+ * VBook cần nhận HTML với <p> tags để render đúng xuống hàng.
  */
 function loadViaNewBrowser(chapUrl) {
     var browser = null;
     try {
         browser = Engine.newBrowser();
-        browser.launch(chapUrl, 10000);
+        browser.launch(chapUrl, 12000);
 
+        // JS cực kỳ đơn giản: chỉ lấy innerHTML của article.reader-prose
+        // Nếu không có, fallback lấy các <p> có parent là article
         var jsCode = "(function(){" +
-
-            // ─── Hàm kiểm tra junk (nhúng vào trong callJs) ───────────────
-            "function isJunk(txt){" +
-            "  if(!txt||txt.length<2)return true;" +
-            // Tiêu đề chương
-            "  if(/^(Chương|Quyển|Tập|Chapter)\\s+\\d+[:\\s·•]/i.test(txt))return true;" +
-            // Nav buttons
-            "  if(/^(Trang chủ|Chương trước|Chương sau|Mục lục|Thảo luận|Nghe|Công cụ)/i.test(txt))return true;" +
-            // Ngày tháng
-            "  if(/^\\d{1,2}\\/\\d{1,2}\\/\\d{4}/.test(txt)&&txt.length<30)return true;" +
-            // Thời gian đọc
-            "  if(/^\\d+\\s*(phút|giờ|giây)\\s*(đọc)?$/i.test(txt))return true;" +
-            // Ngày + thời gian kết hợp
-            "  if(/\\d{1,2}\\/\\d{1,2}\\/\\d{4}\\s*[·•]\\s*\\d+\\s*(phút|giờ)/.test(txt))return true;" +
-            // AI badge
-            "  if(/^(AI\\s|Bản AI|Đang đọc bản|AI Truyện)/i.test(txt)&&txt.length<120)return true;" +
-            // Tab title: "10 • Chương 10: ..."
-            "  if(/^\\d+\\s*[·•]\\s*(Chương|Quyển|Tập)/i.test(txt))return true;" +
-            // Tên truyện cuối "| AI Truyện"
-            "  if(/\\|\\s*AI Truyện\\s*$/.test(txt))return true;" +
-            // Chỉ số/ký tự đặc biệt
-            "  if(/^[\\d\\s\\/\\-·•:,]+$/.test(txt))return true;" +
-            "  if(/^(convert|bản convert|bản dịch)$/i.test(txt))return true;" +
-            "  return false;" +
+            // Cách 1: Selector chính xác nhất
+            "var art=document.querySelector('article.reader-prose');" +
+            "if(!art)art=document.querySelector('article[class*=\"reader-prose\"]');" +
+            "if(!art)art=document.querySelector('[class*=\"rich-content\"]');" +
+            "if(art){" +
+            // Lấy innerHTML trực tiếp — đã có sẵn <p> tags đúng format
+            "  var html=art.innerHTML;" +
+            "  if(html&&html.length>50)return html;" +
             "}" +
-
-            // ─── Bước 1: Lấy tất cả <p> trong document, filter junk ────────
-            "var allPs=document.querySelectorAll('p');" +
+            // Cách 2: Fallback — lấy từng <p> có parent là article
+            "var ps=document.querySelectorAll('article p');" +
             "var res=[];" +
-            "for(var pi=0;pi<allPs.length;pi++){" +
-            "  var p=allPs[pi];" +
-            // Bỏ p có chứa link (breadcrumb, nav)
-            "  if(p.querySelectorAll('a').length>0)continue;" +
-            // Bỏ p nằm trong nav/footer/header/feed thông qua ancestor
-            "  var anc=p.parentElement;var skip=false;" +
-            "  for(var d=0;d<8&&anc;d++){" +
-            "    var tag=(anc.tagName||'').toUpperCase();" +
-            "    var cn=(anc.className||'').toLowerCase();" +
-            "    if(tag==='NAV'||tag==='FOOTER'||tag==='HEADER'){skip=true;break;}" +
-            "    if(/(feed|breadcrumb|navbar|sidebar|comment|discuss)/i.test(cn)){skip=true;break;}" +
-            "    anc=anc.parentElement;" +
-            "  }" +
-            "  if(skip)continue;" +
-            "  var txt=((p.innerText||p.textContent)||'').trim();" +
-            "  if(txt.length<15)continue;" +
-            "  if(isJunk(txt))continue;" +
+            "for(var i=0;i<ps.length;i++){" +
+            "  var txt=(ps[i].innerText||'').trim();" +
+            "  if(txt.length<10)continue;" +
             "  res.push('<p>'+txt+'</p>');" +
             "}" +
-            "if(res.length>=2)return res.join('\\n');" +
-
-            // ─── Fallback: Tìm article trong main, tách theo \n\n ──────────
-            "var mainEl=document.querySelector('main');" +
-            "var art=(mainEl&&mainEl.querySelector('article'))||document.querySelector('article');" +
-            "if(!art)return '';" +
-            // Clone và xóa các phần tử UI
-            "var clone=art.cloneNode(true);" +
-            "var rmSel='button,[role=\"button\"],[role=\"switch\"],form,script,style,svg,nav,header,footer,[aria-hidden=\"true\"],[class*=\"animate-pulse\"],[class*=\"sr-only\"]';" +
-            "var rmEls=clone.querySelectorAll(rmSel);" +
-            "for(var ri=rmEls.length-1;ri>=0;ri--){" +
-            "  try{var rp=rmEls[ri].parentNode;if(rp)rp.removeChild(rmEls[ri]);}catch(e){}" +
-            "}" +
-            "var raw=((clone.innerText||clone.textContent)||'').trim();" +
-            "if(raw.length<30)return '';" +
-            // Tách theo đoạn văn (2+ dòng trắng) - bảo toàn đoạn
-            "var blocks=raw.split(/\\n{2,}/);" +
-            "res=[];" +
-            "for(var bi=0;bi<blocks.length;bi++){" +
-            "  var blk=blocks[bi].replace(/\\n/g,' ').trim();" +
-            "  if(blk.length<15)continue;" +
-            "  if(isJunk(blk))continue;" +
-            "  res.push('<p>'+blk+'</p>');" +
-            "}" +
-            "if(res.length>=2)return res.join('\\n');" +
-            // Last resort: từng dòng đủ dài
+            "if(res.length>=3)return res.join('\\n');" +
+            // Cách 3: Last resort — article innerText tách theo dòng
+            "var artEl=document.querySelector('article');" +
+            "if(!artEl)return '';" +
+            "var raw=(artEl.innerText||'').trim();" +
+            "if(raw.length<50)return '';" +
             "var lines=raw.split('\\n');" +
             "res=[];" +
-            "for(var li=0;li<lines.length;li++){" +
-            "  var ln=lines[li].trim();" +
-            "  if(ln.length<20)continue;" +
-            "  if(isJunk(ln))continue;" +
-            "  res.push('<p>'+ln+'</p>');" +
+            "for(var j=0;j<lines.length;j++){" +
+            "  var ln=lines[j].trim();" +
+            "  if(ln.length>=15)res.push('<p>'+ln+'</p>');" +
             "}" +
             "return res.join('\\n');" +
-
             "})()";
 
         var result = browser.callJs(jsCode, 8000);
@@ -215,13 +131,35 @@ function loadViaNewBrowser(chapUrl) {
         browser.close();
 
         if (content && content.trim().length > 50) {
-            return content.trim();
+            return cleanBrowserContent(content.trim());
         }
         return "";
     } catch (e) {
         try { if (browser) browser.close(); } catch (_) {}
         return "";
     }
+}
+
+/**
+ * Làm sạch HTML trả về từ browser:
+ * - Xóa script/style tags
+ * - Xóa buttons, svg, hidden elements
+ * - Giữ nguyên <p> tags và nội dung text
+ */
+function cleanBrowserContent(html) {
+    if (!html) return "";
+    // Xóa script/style
+    html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
+    html = html.replace(/<style[\s\S]*?<\/style>/gi, "");
+    // Xóa svg
+    html = html.replace(/<svg[\s\S]*?<\/svg>/gi, "");
+    // Xóa button
+    html = html.replace(/<button[\s\S]*?<\/button>/gi, "");
+    // Xóa div[aria-hidden]
+    html = html.replace(/<[^>]+aria-hidden="true"[\s\S]*?<\/[^>]+>/gi, "");
+    // Xóa các phần tử animate-pulse (skeleton loader)
+    html = html.replace(/<[^>]+animate-pulse[\s\S]*?<\/[^>]+>/gi, "");
+    return html.trim();
 }
 
 function execute(url) {
