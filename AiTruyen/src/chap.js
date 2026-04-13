@@ -24,7 +24,7 @@ function getSessionCookies() {
  * Trích chapterHandle từ RSC data (script __next_f) trong HTML.
  */
 function extractChapterHandle(html) {
-    var m = html.match(/\\\"chapterHandle\\\":\\\"(rh1\.[^\"\\]+)/)
+    var m = html.match(/\\\"chapterHandle\\\":\\\"(rh1\\.[^\"\\]+)/)
            || html.match(/"chapterHandle":"(rh1\.[^"]+)"/);
     return m ? m[1] : "";
 }
@@ -72,71 +72,114 @@ function callContentApi(chapUrl, chapterHandle, cookieStr) {
 
 /**
  * Dùng Engine.newBrowser() để render trang rồi dùng callJs() trích nội dung.
- * Browser đã có session từ lần đăng nhập trước → nội dung sẽ hiện ra.
- * Chiến lược:
- *   1. Tìm article trong section ".reader-drop-cap" (selector đặc trưng của aitruyen.net)
- *   2. Lấy div[aria-live] chứa nội dung thực (không phải skeleton loading)
- *   3. Xóa các thành phần UI (button, svg, animate-pulse, sr-only, hidden)
- *   4. Lấy các <p> trong vùng nội dung đó — KHÔNG quét toàn trang
- *   5. Fallback: tách innerText theo dòng trong article (không toàn trang)
+ *
+ * Phân tích cấu trúc HTML AiTruyen (từ RSC data):
+ *  - div.reader-surface > article.mt-6  → chứa nội dung chương thực sự
+ *  - Article header: div[class*="border-b"]  → title + ngày/giờ đọc → BỎ QUA
+ *  - Nội dung chương: các thẻ <p> bên dưới header (sau khi API trả về)
+ *  - chapterFeed: nằm NGOÀI article, chứa teaser ~10 chương xung quanh → BỎ QUA
+ *
+ * Vấn đề cũ:
+ *  - JS lấy tất cả <p> trong article → bao gồm cả header và chapterFeed
+ *  - chapterFeed bị render vào DOM với title chương ("Chương 5...") và ngày tháng
+ *  - Text bị vỡ dòng do fallback split('\n') không bảo toàn đoạn văn
  */
 function loadViaNewBrowser(chapUrl) {
     var browser = null;
     try {
         browser = Engine.newBrowser();
-        // Giảm xuống 10 giây — đủ để React + API load xong khi đã đăng nhập
         browser.launch(chapUrl, 10000);
 
         var jsCode = "(function(){" +
-            // Bước 1: Tìm <article> bên trong section chứa nội dung chương
-            // aitruyen.net dùng class 'reader-drop-cap' trên section content
-            "var article=null;" +
-            "var rdcSec=document.querySelector('.reader-drop-cap');" +
-            "if(rdcSec)article=rdcSec.querySelector('article');" +
-            "if(!article){" +
-            // Fallback: tìm section có aria-label chứa 'dung' (Nội dung)
-            "  var secs=document.querySelectorAll('section[aria-label]');" +
-            "  for(var si=0;si<secs.length;si++){" +
-            "    var lbl=(secs[si].getAttribute('aria-label')||'').toLowerCase();" +
-            "    if(lbl.indexOf('dung')>=0||lbl.indexOf('content')>=0){" +
-            "      article=secs[si].querySelector('article');break;" +
+            // ─── Bước 1: Định vị article chứa nội dung chương ───────────────
+            // Cấu trúc đã xác nhận qua RSC data:
+            //   .reader-surface > article.mt-6  (nội dung thực)
+            //   Ngoài article: chapterFeed với teaser nhiều chương → KHÔNG LẤY
+            "var prose=null;" +
+            "var surface=document.querySelector('[class*=\"reader-surface\"]');" +
+            "if(surface){" +
+            "  var art=surface.querySelector('article');" +
+            "  if(art){" +
+            "    var live=art.querySelector('[aria-live]');" +
+            "    prose=live||art;" +
+            "  }" +
+            "}" +
+            // Fallback: article đầu trong main (không qua chapterFeed)
+            "if(!prose){" +
+            "  var mainEl=document.querySelector('main');" +
+            "  if(mainEl){" +
+            "    var arts=mainEl.querySelectorAll('article');" +
+            "    for(var ai=0;ai<arts.length;ai++){" +
+            "      var txt0=((arts[ai].innerText||arts[ai].textContent)||'');" +
+            "      if(txt0.length>100){" +
+            "        var live2=arts[ai].querySelector('[aria-live]');" +
+            "        prose=live2||arts[ai];break;" +
+            "      }" +
             "    }" +
             "  }" +
             "}" +
-            "if(!article){" +
-            // Fallback cuối: article đầu tiên có nội dung đủ dài
-            "  var arts=document.querySelectorAll('main article,article');" +
-            "  for(var ai=0;ai<arts.length;ai++){" +
-            "    if(((arts[ai].innerText||arts[ai].textContent)||'').length>100){article=arts[ai];break;}" +
-            "  }" +
-            "}" +
-            "if(!article)return '';" +
-            // Bước 2: Ưu tiên div[aria-live] — chứa nội dung khi đã load xong
-            "var contentDiv=article.querySelector('[aria-live]');" +
-            "var targetEl=contentDiv||article;" +
-            // Bước 3: Clone và loại bỏ các phần tử UI / skeleton / hidden
-            "var clone=targetEl.cloneNode(true);" +
-            "var rmSel='button,[role=\"button\"],[role=\"switch\"],form,script,style,svg,header,nav,footer,[hidden],[aria-hidden=\"true\"],[class*=\"animate-pulse\"],[class*=\"sr-only\"]';" +
+            "if(!prose)return '';" +
+
+            // ─── Bước 2: Clone và loại bỏ các phần tử không phải nội dung ───
+            // Xóa: header block (title/date = div[class*='border-b']),
+            //       buttons, icons, subscription/AI-gate, skeleton loaders
+            "var clone=prose.cloneNode(true);" +
+            "var rmSel=[" +
+            "  'button','[role=\"button\"]','[role=\"switch\"]'," +
+            "  'form','script','style','svg','header','nav','footer'," +
+            "  '[hidden]','[aria-hidden=\"true\"]'," +
+            "  '[class*=\"animate-pulse\"]','[class*=\"sr-only\"]'," +
+            // Header block trong article: div.space-y-3.border-b (title + date/time)
+            "  'div[class*=\"border-b\"]'," +
+            // Lock/gate UI
+            "  '[class*=\"lock\"]','[class*=\"gate\"]','[class*=\"paywall\"]'," +
+            "  '[class*=\"subscribe\"]','[class*=\"unlock\"]'" +
+            "].join(',');" +
             "var rmEls=clone.querySelectorAll(rmSel);" +
-            "for(var ri=(rmEls.length-1);ri>=0;ri--){" +
-            "  try{var p=rmEls[ri].parentNode;if(p)p.removeChild(rmEls[ri]);}catch(e){}" +
+            "for(var ri=rmEls.length-1;ri>=0;ri--){" +
+            "  try{var rp=rmEls[ri].parentNode;if(rp)rp.removeChild(rmEls[ri]);}catch(e){}" +
             "}" +
-            // Bước 4: Lấy <p> từ vùng nội dung (KHÔNG quét toàn trang)
+
+            // ─── Bước 3: Lấy nội dung từ các thẻ <p> ───────────────────────
+            // Mỗi <p> = một đoạn văn → wrap vào <p>...</p> để bảo toàn xuống hàng
             "var ps=clone.querySelectorAll('p');" +
             "var res=[];" +
             "for(var pi=0;pi<ps.length;pi++){" +
-            "  var txt=((ps[pi].innerText||ps[pi].textContent)||'').trim();" +
-            "  if(txt.length>=10)res.push('<p>'+txt+'</p>');" +
+            "  var ptxt=((ps[pi].innerText||ps[pi].textContent)||'').trim();" +
+            // Bỏ p rỗng / quá ngắn (label UI)
+            "  if(ptxt.length<10)continue;" +
+            // Bỏ p chỉ là ngày tháng / thời gian đọc (vd: '22/01/2026', '10 phút đọc')
+            "  if(/^[\\d\\/\\s:\\-·•]+$/.test(ptxt))continue;" +
+            "  if(/^\\d+\\s*(phút|giờ|giây)\\s*(đọc)?$/i.test(ptxt))continue;" +
+            // Bỏ p là tiêu đề chương  (Chương X: ...)
+            "  if(/^(Chương|Quyển|Tập|Chapter)\\s+\\d+[:\\s]/i.test(ptxt))continue;" +
+            "  res.push('<p>'+ptxt+'</p>');" +
             "}" +
             "if(res.length>=2)return res.join('\\n');" +
-            // Fallback: tách theo dòng trong article scope (KHÔNG toàn trang)
+
+            // ─── Fallback: tách innerText theo đoạn văn (\\n\\n) ────────────
             "var raw=((clone.innerText||clone.textContent)||'').trim();" +
             "if(raw.length<30)return '';" +
+            "var blocks=raw.split(/\\n{2,}/);" +
+            "res=[];" +
+            "for(var bi=0;bi<blocks.length;bi++){" +
+            "  var blk=blocks[bi].trim();" +
+            "  if(blk.length<10)continue;" +
+            "  if(/^[\\d\\/\\s:\\-·•]+$/.test(blk))continue;" +
+            "  if(/^\\d+\\s*(phút|giờ|giây)\\s*(đọc)?$/i.test(blk))continue;" +
+            "  if(/^(Chương|Quyển|Tập|Chapter)\\s+\\d+[:\\s]/i.test(blk))continue;" +
+            "  res.push('<p>'+blk+'</p>');" +
+            "}" +
+            "if(res.length>=2)return res.join('\\n');" +
+            // Last resort: từng dòng
             "var lines=raw.split('\\n');" +
             "res=[];" +
             "for(var li=0;li<lines.length;li++){" +
             "  var ln=lines[li].trim();" +
-            "  if(ln.length>=15)res.push('<p>'+ln+'</p>');" +
+            "  if(ln.length<20)continue;" +
+            "  if(/^[\\d\\/\\s:\\-·•]+$/.test(ln))continue;" +
+            "  if(/^(Chương|Quyển|Tập|Chapter)\\s+\\d+[:\\s]/i.test(ln))continue;" +
+            "  res.push('<p>'+ln+'</p>');" +
             "}" +
             "return res.join('\\n');" +
             "})()";
