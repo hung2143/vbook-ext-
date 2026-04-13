@@ -4,8 +4,8 @@
 // Chiến lược:
 // 1. Thử lấy cookie từ localCookie (nếu đã đăng nhập qua browser của app)
 // 2. Nếu có cookie → gọi API /api/chapters/{handle}/content
-// 3. Nếu API thất bại hoặc không có cookie → dùng Engine.newBrowser() để load
-//    trang trực tiếp (browser đã có session từ lần đăng nhập trước) và trích DOM
+// 3. Nếu API thất bại hoặc không có cookie → dùng Engine.newBrowser() render
+//    và dùng callJs() để trích chính xác nội dung các đoạn truyện
 
 var HOST = "https://aitruyen.net";
 
@@ -27,61 +27,6 @@ function extractChapterHandle(html) {
     var m = html.match(/\\\"chapterHandle\\\":\\\"(rh1\.[^\"\\]+)/)
            || html.match(/"chapterHandle":"(rh1\.[^"]+)"/);
     return m ? m[1] : "";
-}
-
-/**
- * Trích nội dung chapter từ DOM bằng browser (browser đã có session).
- * Dùng khi API không hoạt động hoặc chưa đăng nhập qua API.
- */
-function loadViaNewBrowser(chapUrl) {
-    var browser = null;
-    try {
-        browser = Engine.newBrowser();
-        var doc = browser.launch(chapUrl, 15000);
-        var content = "";
-
-        if (doc) {
-            // Thử các selector phổ biến của AiTruyen (Next.js render)
-            var selectors = [
-                ".chapter-content",
-                "[class*='chapter-content']",
-                "[class*='chapterContent']",
-                "[class*='content']",
-                "article",
-                "main"
-            ];
-            for (var i = 0; i < selectors.length; i++) {
-                try {
-                    var el = doc.select(selectors[i]);
-                    if (!el || el.isEmpty()) continue;
-                    var txt = el.first().text();
-                    if (txt && txt.length > 100) {
-                        content = el.first().html();
-                        break;
-                    }
-                } catch (se) {}
-            }
-
-            // Fallback: lấy toàn bộ body text
-            if (!content || content.length < 100) {
-                try {
-                    var body = doc.select("body").first();
-                    if (body) {
-                        var bodyTxt = body.text();
-                        if (bodyTxt && bodyTxt.length > 100) {
-                            content = body.html();
-                        }
-                    }
-                } catch (be) {}
-            }
-        }
-
-        browser.close();
-        return content;
-    } catch (e) {
-        try { if (browser) browser.close(); } catch (_) {}
-        return "";
-    }
 }
 
 /**
@@ -125,6 +70,78 @@ function callContentApi(chapUrl, chapterHandle, cookieStr) {
     return "";
 }
 
+/**
+ * Dùng Engine.newBrowser() để render trang rồi dùng callJs() trích nội dung.
+ * Browser đã có session từ lần đăng nhập trước → nội dung sẽ hiện ra.
+ */
+function loadViaNewBrowser(chapUrl) {
+    var browser = null;
+    try {
+        browser = Engine.newBrowser();
+        // Load trang, chờ 15 giây để JS render xong
+        browser.launch(chapUrl, 15000);
+
+        // Dùng callJs để lấy nội dung: tìm container chứa nhiều đoạn văn nhất
+        // Lọc ra những <p> có text dài (>= 20 ký tự) và không phải UI
+        var jsCode = "(function(){" +
+            // Danh sách các container ứng viên (ưu tiên cao → thấp)
+            "var candidates=[" +
+            "  '[class*=\"ChapterContent\"]'," +
+            "  '[class*=\"chapter-content\"]'," +
+            "  '[class*=\"chapterContent\"]'," +
+            "  '[class*=\"readerContent\"]'," +
+            "  '[class*=\"reader-content\"]'," +
+            "  '[class*=\"content-chapter\"]'," +
+            "  '.prose'," +
+            "  'article'," +
+            "  'main'" +
+            "];" +
+            // Tìm container có nhiều text nhất
+            "var best='', bestLen=0;" +
+            "for(var i=0;i<candidates.length;i++){" +
+            "  try{" +
+            "    var els=document.querySelectorAll(candidates[i]);" +
+            "    for(var j=0;j<els.length;j++){" +
+            "      var t=(els[j].innerText||'').trim();" +
+            "      if(t.length>bestLen){bestLen=t.length;best=els[j].innerHTML||'';}" +
+            "    }" +
+            "    if(bestLen>200)break;" +
+            "  }catch(e){}" +
+            "}" +
+            // Nếu không tìm được container → ghép tất cả <p> dài
+            "if(bestLen<200){" +
+            "  var ps=document.querySelectorAll('p');" +
+            "  var arr=[];" +
+            "  var noiseRe=/^(Chương|Chapter|Trước|Sau|Mục lục|Thảo luận|Bình luận|Đăng nhập|Đăng ký|Trang chủ|Theo dõi|Thông báo|phản hồi|sẵn sàng|vBook)/i;" +
+            "  for(var k=0;k<ps.length;k++){" +
+            "    var txt=(ps[k].innerText||'').trim();" +
+            "    if(txt.length>=20 && !noiseRe.test(txt)){arr.push('<p>'+txt+'</p>');}" +
+            "  }" +
+            "  if(arr.length>=3){best=arr.join('\\n');}" +
+            "}" +
+            "return best;" +
+            "})()";
+
+        var result = browser.callJs(jsCode, 8000);
+        var content = "";
+        if (result) {
+            // callJs trả về Document hoặc string tuỳ API
+            try { content = result.text ? String(result.text()) : String(result); }
+            catch (e) { content = String(result); }
+        }
+
+        browser.close();
+
+        if (content && content.trim().length > 50) {
+            return content.trim();
+        }
+        return "";
+    } catch (e) {
+        try { if (browser) browser.close(); } catch (_) {}
+        return "";
+    }
+}
+
 function execute(url) {
     var m = url.match(/\/truyen\/([^/?#]+)\/chuong-(\d+)/);
     if (!m) return null;
@@ -163,24 +180,15 @@ function execute(url) {
                 }
             }
         } catch (e) {}
-
-        // API thất bại dù có cookie → thử browser (session có thể vẫn còn trong browser)
-        var browserContent = loadViaNewBrowser(chapUrl);
-        if (browserContent && browserContent.length > 50) {
-            return Response.success(browserContent);
-        }
-
-        // Nếu browser cũng thất bại
-        return Response.error("Không tải được nội dung. Vui lòng đăng nhập lại tại aitruyen.net rồi thử lại.");
     }
 
-    // === Bước 3: Không có cookie → dùng browser trực tiếp ===
+    // === Bước 3: Dùng browser để render (có hoặc không có cookie) ===
     // Browser đã lưu session từ lần đăng nhập trước trên aitruyen.net
     var browserContent = loadViaNewBrowser(chapUrl);
     if (browserContent && browserContent.length > 50) {
         return Response.success(browserContent);
     }
 
-    // Chưa đăng nhập, hướng dẫn người dùng
+    // Chưa đăng nhập hoặc không lấy được nội dung
     return Response.error("Vui lòng đăng nhập tại aitruyen.net trên trình duyệt của ứng dụng, sau đó thử lại.");
 }
