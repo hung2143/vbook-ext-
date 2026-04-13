@@ -2,7 +2,7 @@
   "metadata": {
     "name": "AI Truyện",
     "author": "Hung",
-    "version": 8,
+    "version": 9,
     "source": "https://aitruyen.net",
     "icon": "icon.png",
     "regexp": "https?://(www\\.)?aitruyen\\.net/truyen/[^/?#]+.*",

@@ -1,4 +1,5 @@
-﻿// gen.js - Lấy danh sách truyện từ trang chủ / danh mục AiTruyen
+﻿// gen.js - Lấy danh sách truyện từ bảng xếp hạng AiTruyen
+// Tham khảo pattern TiemTruyenChu: fetch URL + append &page=N + selectors trực tiếp
 var HOST = "https://aitruyen.net";
 
 function execute(url, page) {
@@ -6,15 +7,9 @@ function execute(url, page) {
     var pageNum = parseInt(page, 10);
     if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
 
-    function normalizeUrl(link) {
-        if (!link) return "";
-        if (link.indexOf("//") === 0) return "https:" + link;
-        if (link.indexOf("http") !== 0) return HOST + link;
-        return link;
-    }
-
     function normalizeCover(src) {
         if (!src) return "";
+        // Xử lý /_next/image optimization URLs
         if (src.indexOf("/_next/image") >= 0) {
             var m = src.match(/url=([^&]+)/);
             if (m) src = decodeURIComponent(m[1]);
@@ -24,57 +19,28 @@ function execute(url, page) {
         return src;
     }
 
-    var data = [];
-    var seen = {};
-
-    function pushNovel(link, name, cover) {
-        if (!link || !name) return;
-        if (link.indexOf("/truyen/") < 0) return;
-        if (link.indexOf("/chuong-") >= 0) return;
-        var m = link.match(/^(https?:\/\/[^/]+\/truyen\/[^/?#]+)/);
-        var canonLink = m ? m[1] : link;
-        if (seen[canonLink]) return;
-        seen[canonLink] = true;
-        data.push({
-            name: (name + "").trim(),
-            link: canonLink,
-            cover: cover || "",
-            host: HOST
-        });
-    }
-
-    function extractImgCover(el) {
-        if (!el) return "";
-        var src = el.attr("src") || el.attr("data-src") || "";
-        if (!src) {
-            // Next.js Image renders srcset; grab first URL entry
-            var srcset = el.attr("srcset") || "";
-            if (srcset) {
-                src = srcset.split(",")[0].trim().split(/\s+/)[0] || "";
-            }
-        }
-        return normalizeCover(src);
-    }
-
-    var listUrl = (url && url.indexOf("page=") >= 0)
-        ? url + pageNum
-        : HOST + "/?page=" + pageNum;
+    // Xây URL: trang 1 dùng URL gốc, trang 2+ append &page=N
+    // (giống cách TiemTruyenChu: url + "&page=" + page)
+    var base = (url && url.indexOf("http") === 0) ? url : (HOST + "/bang-xep-hang?type=thinh-hanh");
+    base = base.replace(/[&?]page=\d+/g, "");   // bỏ page= cũ nếu có
+    var listUrl = pageNum > 1 ? base + "&page=" + pageNum : base;
 
     var response = fetch(listUrl, {
         headers: {
             "user-agent": UserAgent.chrome(),
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "referer": HOST + "/"
         }
     });
 
     if (!response || !response.ok) return Response.success([], null);
-
     var doc = response.html("utf-8");
     if (!doc) return Response.success([], null);
 
-    // Bước 1: Xây dựng bản đồ slug -> cover từ tất cả link ảnh trên trang.
-    // Aitruyen.net dùng cấu trúc: <a href="/truyen/slug"><img .../></a> (link ảnh)
-    // và <a href="/truyen/slug"><h3>Tên</h3></a> (link tiêu đề) là hai phần tử khác nhau.
+    var data = [];
+    var seen = {};
+
+    // Bước 1: Xây coverMap từ link ảnh (a[href*='/truyen/']:has(img))
     var coverMap = {};
     var imgLinks = doc.select("a[href*='/truyen/']:has(img)");
     for (var ci = 0; ci < imgLinks.size(); ci++) {
@@ -85,64 +51,51 @@ function execute(url, page) {
         if (!slugM) continue;
         var slug = slugM[1];
         if (coverMap[slug]) continue;
-        var ilCover = extractImgCover(imgLink.select("img").first());
-        if (ilCover) coverMap[slug] = ilCover;
+        var img = imgLink.select("img").first();
+        if (!img) continue;
+        var src = img.attr("src") || img.attr("data-src") || "";
+        if (!src) {
+            var srcset = img.attr("srcset") || "";
+            if (srcset) src = srcset.split(",")[0].trim().split(/\s+/)[0] || "";
+        }
+        var cv = normalizeCover(src);
+        if (cv) coverMap[slug] = cv;
     }
 
-    // Bước 2: Tìm các thẻ link tiêu đề chứa <h3> và ghép với cover từ bản đồ trên.
+    // Bước 2: Lấy tiêu đề từ link chứa <h3>, ghép cover từ coverMap
     var cards = doc.select("a[href*='/truyen/']:has(h3)");
     for (var i = 0; i < cards.size(); i++) {
         var card = cards.get(i);
         var href = card.attr("href") || "";
         if (!href || href.indexOf("/chuong-") >= 0) continue;
-        href = normalizeUrl(href);
+        if (href.indexOf("http") !== 0) href = HOST + href;
 
-        var h3El = card.select("h3").first();
-        var name = h3El ? (h3El.text() + "").trim() : "";
+        var h3 = card.select("h3").first();
+        var name = h3 ? (h3.text() + "").trim() : "";
         if (!name || name.length < 2) continue;
-        if (/^(Truyện mới|Truyện hot|Truyện hoàn|Bảng xếp|Gợi ý|Chương mới|Có thể|KỆ SÁCH|BẢNG XẾP|BIÊN TẬP|NHỮNG BỘ)/i.test(name)) continue;
+        if (/^(Mở truyện|Bảng xếp|Gợi ý|KỆ SÁCH|BẢNG XẾP)/i.test(name)) continue;
 
-        // Ưu tiên cover từ bản đồ (lấy từ link ảnh sibling), fallback sang img trực tiếp
-        var slugM2 = href.match(/\/truyen\/([^/?#]+)/);
-        var storySlug = slugM2 ? slugM2[1] : "";
-        var cover = (storySlug && coverMap[storySlug]) || extractImgCover(card.select("img").first());
-        pushNovel(href, name, cover);
+        var m2 = href.match(/\/truyen\/([^/?#]+)/);
+        var canonLink = m2 ? (HOST + "/truyen/" + m2[1]) : href;
+        if (seen[canonLink]) continue;
+        seen[canonLink] = true;
+
+        data.push({
+            name: name,
+            link: canonLink,
+            cover: (m2 && coverMap[m2[1]]) || "",
+            host: HOST
+        });
     }
 
-    // Phương pháp 2 (fallback): link /truyen/ bất kỳ có text hợp lệ
-    if (data.length === 0) {
-        var allLinks = doc.select("a[href*='/truyen/']");
-        for (var j = 0; j < allLinks.size(); j++) {
-            var a = allLinks.get(j);
-            var ahref = a.attr("href") || "";
-            if (!ahref || ahref.indexOf("/chuong-") >= 0) continue;
-            ahref = normalizeUrl(ahref);
-
-            var innerH3 = a.select("h3").first();
-            var aName = innerH3 ? (innerH3.text() + "").trim() : "";
-            if (!aName) aName = (a.attr("aria-label") || a.text() || "").trim();
-            if (!aName || aName.length < 2 || aName.length > 200) continue;
-            if (/^(Mở truyện|Chương mới|Vào trang|Đọc chương|Xem bảng|Đọc từ đầu|Vào chương|Chương sau|Chương trước|Về trang chủ|Tìm truyện)$/i.test(aName)) continue;
-
-            var aSlugM = ahref.match(/\/truyen\/([^/?#]+)/);
-            var aSlug = aSlugM ? aSlugM[1] : "";
-            var aCover = (aSlug && coverMap[aSlug]) || extractImgCover(a.select("img").first());
-            pushNovel(ahref, aName, aCover);
-        }
-    }
-
+    // Phát hiện trang tiếp: tồn tại link a[href*='&page=N+1'] trong pagination
     var nextPage = null;
     if (data.length > 0) {
-        var nextN = pageNum + 1;
-        var hasNextLink = doc.select("a[href*='page=" + nextN + "']").size() > 0
-            || doc.select("a[rel='next']").size() > 0;
-        if (hasNextLink) {
-            nextPage = nextN.toString();
-        } else if (data.length >= 8 && pageNum === 1) {
-            nextPage = "2";
+        var nextNum = pageNum + 1;
+        if (doc.select("a[href*='&page=" + nextNum + "']").size() > 0) {
+            nextPage = String(nextNum);
         }
     }
 
-    if (data.length === 0) return Response.success([], null);
     return Response.success(data, nextPage);
 }

@@ -1,20 +1,19 @@
 // home.js - Trang chủ AI Truyện
-// Trả về danh sách mục nguồn cấp dữ liệu
 function execute() {
     return Response.success([
         {
-            title: "Truyện thịnh hành tuần",
-            input: "https://aitruyen.net/?sort=latest&page=",
+            title: "Truyện thịnh hành",
+            input: "https://aitruyen.net/bang-xep-hang?type=thinh-hanh",
             script: "gen.js"
         },
         {
-            title: "Truyện hot",
-            input: "https://aitruyen.net/?sort=views&page=",
+            title: "Truyện mới cập nhật",
+            input: "https://aitruyen.net/bang-xep-hang?type=cap-nhat",
             script: "gen.js"
         },
         {
-            title: "Truyện hoàn thành",
-            input: "https://aitruyen.net/?status=completed&page=",
+            title: "Truyện tân binh",
+            input: "https://aitruyen.net/bang-xep-hang?type=tan-binh",
             script: "gen.js"
         }
     ]);
