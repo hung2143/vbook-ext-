@@ -27,9 +27,65 @@ function pushChapter(list, seen, chapUrl, chapName) {
     });
 }
 
-// Trích chapter từ HTML doc
-// Cấu trúc: <a href="/truyen/{slug}/chuong-N">...<p class="line-clamp-2...">Tiêu đề</p>...</a>
-// Dùng :has(p) để lọc bỏ các button-link (Đọc từ đầu / Đọc mới nhất) không có <p> bên trong
+/**
+ * Tách chapter từ script __next_f (RSC data) nhúng trong HTML.
+ * aitruyen.net là Next.js App Router — dữ liệu phân trang chương được
+ * nhúng dưới dạng JSON bên trong các thẻ <script> (self.__next_f.push(...)).
+ * Phân tích bằng regex nhanh hơn nhiều so với JSoup DOM.
+ * Trả về { found: số chương thêm được, totalPages: tổng số trang }
+ */
+function extractChaptersFromRSC(slug, doc, list, seen) {
+    var scripts = doc.select("script:not([src])");
+    var totalPages = 1;
+    var found = 0;
+
+    for (var s = 0; s < scripts.size(); s++) {
+        var txt = scripts.get(s).html();
+        if (!txt || txt.indexOf("ordinal") < 0 || txt.indexOf("chapterNumberRaw") < 0) continue;
+
+        // RSC data tồn tại ở hai dạng trong script text:
+        //   (a) JSON đã decode: "ordinal":N,"title":"..."
+        //   (b) JSON lồng trong JS string: \"ordinal\":N,\"title\":\"...\"
+        // Thử cả hai pattern.
+
+        // Pattern (a) — quotes không bị escape
+        var reA = /"ordinal":(\d+),"chapterNumberRaw":"[^"]*","title":"([^"]*)"/g;
+        var m;
+        while ((m = reA.exec(txt)) !== null) {
+            var ord = parseInt(m[1], 10);
+            var chapUrl = HOST + "/truyen/" + slug + "/chuong-" + ord;
+            var title = m[2].trim() || ("Chương " + ord);
+            pushChapter(list, seen, chapUrl, title);
+            found++;
+        }
+
+        // Pattern (b) — quotes bị escape bằng backslash trong JS string
+        var reB = /\\"ordinal\\":(\d+),\\"chapterNumberRaw\\":\\"[^\\]*\\",\\"title\\":\\"([^\\"]*)\\"/g;
+        while ((m = reB.exec(txt)) !== null) {
+            var ord2 = parseInt(m[1], 10);
+            var chapUrl2 = HOST + "/truyen/" + slug + "/chuong-" + ord2;
+            var title2 = m[2].trim() || ("Chương " + ord2);
+            pushChapter(list, seen, chapUrl2, title2);
+            found++;
+        }
+
+        // Tìm tổng số trang từ field "totalPages" trong pagination
+        var tpA = txt.match(/"totalPages":(\d+)/);
+        if (tpA) {
+            var tp = parseInt(tpA[1], 10);
+            if (tp > totalPages) totalPages = tp;
+        }
+        var tpB = txt.match(/\\"totalPages\\":(\d+)/);
+        if (tpB) {
+            var tp2 = parseInt(tpB[1], 10);
+            if (tp2 > totalPages) totalPages = tp2;
+        }
+    }
+
+    return { found: found, totalPages: totalPages };
+}
+
+// Fallback: trích chapter từ DOM bằng JSoup selector
 function extractChaptersFromDoc(slug, doc, list, seen) {
     var anchors = doc.select("a[href*='/truyen/" + slug + "/chuong-']:has(p)");
     for (var i = 0; i < anchors.size(); i++) {
@@ -38,13 +94,9 @@ function extractChaptersFromDoc(slug, doc, list, seen) {
         href = href.split("#")[0].split("?")[0];
         if (!href || href.indexOf("/chuong-") < 0) continue;
         var chapUrl = normalizeUrl(href);
-
-        // Tiêu đề chương nằm trong thẻ <p> đầu tiên bên trong anchor
         var chapName = "";
         var pEls = a.select("p");
-        if (pEls.size() > 0) {
-            chapName = normalizeText(pEls.get(0).text());
-        }
+        if (pEls.size() > 0) chapName = normalizeText(pEls.get(0).text());
         if (!chapName) {
             var n = parseChapterNum(chapUrl);
             chapName = n > 0 ? ("Chương " + n) : "Chương";
@@ -62,8 +114,7 @@ function execute(url) {
     var result = [];
     var seen = {};
 
-    // HTML scraping: aitruyen.net không có JSON API cho danh sách chương
-    // Dùng ?chapterOrder=asc để lấy từ chương 1 trở đi
+    // Fetch trang đầu với sắp xếp tăng dần
     var firstUrl = storyUrl + "?chapterOrder=asc";
     var firstResp = fetch(firstUrl, {
         headers: {
@@ -76,28 +127,36 @@ function execute(url) {
     var firstDoc = firstResp.html("utf-8");
     if (!firstDoc) return Response.success([]);
 
-    extractChaptersFromDoc(slug, firstDoc, result, seen);
+    // Ưu tiên RSC extraction (nhanh hơn DOM parsing)
+    var rscInfo = extractChaptersFromRSC(slug, firstDoc, result, seen);
+    var maxPage = rscInfo.totalPages;
 
-    // Tìm tổng số trang từ pagination links (vd: href="?chapterPage=123&...")
-    var maxPage = 1;
-    var pageLinks = firstDoc.select("a[href*='chapterPage=']");
-    for (var p = 0; p < pageLinks.size(); p++) {
-        var href2 = pageLinks.get(p).attr("href") || "";
-        var m2 = href2.match(/chapterPage=(\d+)/i);
-        if (!m2) continue;
-        var n2 = parseInt(m2[1], 10);
-        if (n2 > maxPage) maxPage = n2;
+    // Fallback sang DOM nếu RSC không cho kết quả
+    if (result.length === 0) {
+        extractChaptersFromDoc(slug, firstDoc, result, seen);
+
+        // Tìm tổng số trang từ pagination links trong DOM
+        if (maxPage <= 1) {
+            var pageLinks = firstDoc.select("a[href*='chapterPage=']");
+            for (var p = 0; p < pageLinks.size(); p++) {
+                var href2 = pageLinks.get(p).attr("href") || "";
+                var m2 = href2.match(/chapterPage=(\d+)/i);
+                if (!m2) continue;
+                var n2 = parseInt(m2[1], 10);
+                if (n2 > maxPage) maxPage = n2;
+            }
+        }
+
+        // Fallback: tìm "Trang N/M" trong text trang
+        if (maxPage <= 1) {
+            var docText = firstDoc.text() || "";
+            var trangMatch = docText.match(/[Tt]rang\s*\d+\s*\/\s*(\d+)/);
+            if (trangMatch) maxPage = parseInt(trangMatch[1], 10) || 1;
+        }
     }
 
-    // Fallback: tìm "Trang N/M" trong text trang
-    if (maxPage <= 1) {
-        var docText = firstDoc.text() || "";
-        var trangMatch = docText.match(/[Tt]rang\s*\d+\s*\/\s*(\d+)/);
-        if (trangMatch) maxPage = parseInt(trangMatch[1], 10) || 1;
-    }
-
-    // Giới hạn 15 trang (360 chương) để tránh timeout
-    if (maxPage > 15) maxPage = 15;
+    // Giới hạn 20 trang (≈ 480 chương) để tránh timeout
+    if (maxPage > 20) maxPage = 20;
 
     // Fetch các trang tiếp theo
     for (var pg = 2; pg <= maxPage; pg++) {
@@ -113,7 +172,10 @@ function execute(url) {
         if (!pgDoc) break;
 
         var before = result.length;
-        extractChaptersFromDoc(slug, pgDoc, result, seen);
+        // Dùng RSC trước, fallback DOM
+        var pgRsc = extractChaptersFromRSC(slug, pgDoc, result, seen);
+        if (pgRsc.found === 0) extractChaptersFromDoc(slug, pgDoc, result, seen);
+
         // Dừng sớm nếu không còn chương mới
         if (result.length === before && pg > 2) break;
     }

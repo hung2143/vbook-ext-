@@ -73,85 +73,77 @@ function callContentApi(chapUrl, chapterHandle, cookieStr) {
 /**
  * Dùng Engine.newBrowser() để render trang rồi dùng callJs() trích nội dung.
  * Browser đã có session từ lần đăng nhập trước → nội dung sẽ hiện ra.
+ * Chiến lược:
+ *   1. Tìm article trong section ".reader-drop-cap" (selector đặc trưng của aitruyen.net)
+ *   2. Lấy div[aria-live] chứa nội dung thực (không phải skeleton loading)
+ *   3. Xóa các thành phần UI (button, svg, animate-pulse, sr-only, hidden)
+ *   4. Lấy các <p> trong vùng nội dung đó — KHÔNG quét toàn trang
+ *   5. Fallback: tách innerText theo dòng trong article (không toàn trang)
  */
 function loadViaNewBrowser(chapUrl) {
     var browser = null;
     try {
         browser = Engine.newBrowser();
-        // Load trang, chờ 15 giây để JS render xong
-        browser.launch(chapUrl, 15000);
+        // Giảm xuống 10 giây — đủ để React + API load xong khi đã đăng nhập
+        browser.launch(chapUrl, 10000);
 
-        // Dùng callJs để lấy nội dung: lọc sạch nội dung thừa, giữ đúng format đoạn văn
         var jsCode = "(function(){" +
-            // Regex tiêu đề noise: nhận biết các pattern thừa ở đầu trang
-            "var noiseRe=/^(Chương|Chapter|Trước|Sau|Mục lục|Thảo luận|Bình luận|Đăng nhập|Đăng ký|Trang chủ|Theo dõi|Thông báo|phản hồi|sẵn sàng|vBook|AI Đang|Nghe Công|[0-9\\/]+\\s*(phút|giờ|giây))/i;" +
-            // Xóa các tag UI: header, nav, button, form, script, style, figure, img, svg
-            "function cleanEl(el){" +
-            "  var removes=el.querySelectorAll('header,nav,footer,button,form,script,style,figure,img,svg,[aria-label],[role=\"navigation\"],[role=\"banner\"],[role=\"complementary\"],.breadcrumb,.chapter-nav,.chapter-navigation,.reading-nav,.social,.share,.comment,.advertisement,.ads');" +
-            "  for(var r=0;r<removes.length;r++){try{removes[r].remove();}catch(e){}}" +
-            "}" +
-            // Tìm container nội dung chính
-            "var candidates=[" +
-            "  '[class*=\"ChapterContent\"]'," +
-            "  '[class*=\"chapter-content\"]'," +
-            "  '[class*=\"chapterContent\"]'," +
-            "  '[class*=\"readerContent\"]'," +
-            "  '[class*=\"reader-content\"]'," +
-            "  '[class*=\"content-chapter\"]'," +
-            "  '.prose'," +
-            "  'article'" +
-            "];" +
-            "var bestEl=null, bestLen=0;" +
-            "for(var i=0;i<candidates.length;i++){" +
-            "  try{" +
-            "    var els=document.querySelectorAll(candidates[i]);" +
-            "    for(var j=0;j<els.length;j++){" +
-            "      var t=(els[j].innerText||'').trim();" +
-            "      if(t.length>bestLen){bestLen=t.length;bestEl=els[j];}" +
-            "    }" +
-            "    if(bestLen>200)break;" +
-            "  }catch(e){}" +
-            "}" +
-            // Nếu tìm được container → clone rồi xóa noise bên trong
-            "var paragraphs=[];" +
-            "if(bestEl && bestLen>200){" +
-            "  var clone=bestEl.cloneNode(true);" +
-            "  cleanEl(clone);" +
-            "  var ps=clone.querySelectorAll('p');" +
-            "  for(var k=0;k<ps.length;k++){" +
-            "    var txt=(ps[k].innerText||ps[k].textContent||'').trim();" +
-            "    if(txt.length>=15 && !noiseRe.test(txt)){paragraphs.push(txt);}" +
-            "  }" +
-            "  // Nếu không có p → lấy các dòng text từ innerText" +
-            "  if(paragraphs.length<3){" +
-            "    var lines=(clone.innerText||'').split('\\n');" +
-            "    paragraphs=[];" +
-            "    for(var l=0;l<lines.length;l++){" +
-            "      var ln=lines[l].trim();" +
-            "      if(ln.length>=15 && !noiseRe.test(ln)){paragraphs.push(ln);}" +
+            // Bước 1: Tìm <article> bên trong section chứa nội dung chương
+            // aitruyen.net dùng class 'reader-drop-cap' trên section content
+            "var article=null;" +
+            "var rdcSec=document.querySelector('.reader-drop-cap');" +
+            "if(rdcSec)article=rdcSec.querySelector('article');" +
+            "if(!article){" +
+            // Fallback: tìm section có aria-label chứa 'dung' (Nội dung)
+            "  var secs=document.querySelectorAll('section[aria-label]');" +
+            "  for(var si=0;si<secs.length;si++){" +
+            "    var lbl=(secs[si].getAttribute('aria-label')||'').toLowerCase();" +
+            "    if(lbl.indexOf('dung')>=0||lbl.indexOf('content')>=0){" +
+            "      article=secs[si].querySelector('article');break;" +
             "    }" +
             "  }" +
-            "} else {" +
-            // Fallback: quét toàn bộ <p> trên trang
-            "  var ps=document.querySelectorAll('p');" +
-            "  for(var k=0;k<ps.length;k++){" +
-            "    var txt=(ps[k].innerText||'').trim();" +
-            "    if(txt.length>=15 && !noiseRe.test(txt)){paragraphs.push(txt);}" +
+            "}" +
+            "if(!article){" +
+            // Fallback cuối: article đầu tiên có nội dung đủ dài
+            "  var arts=document.querySelectorAll('main article,article');" +
+            "  for(var ai=0;ai<arts.length;ai++){" +
+            "    if(((arts[ai].innerText||arts[ai].textContent)||'').length>100){article=arts[ai];break;}" +
             "  }" +
             "}" +
-            // Lọc thêm lần cuối: bỏ các dòng quá ngắn hoặc chỉ toàn số/ký tự đặc biệt
-            "var result=[];" +
-            "for(var p=0;p<paragraphs.length;p++){" +
-            "  var s=paragraphs[p];" +
-            "  if(s.length>=15 && /[\\u00C0-\\u024F\\w]/.test(s)){result.push('<p>'+s+'</p>');}" +
+            "if(!article)return '';" +
+            // Bước 2: Ưu tiên div[aria-live] — chứa nội dung khi đã load xong
+            "var contentDiv=article.querySelector('[aria-live]');" +
+            "var targetEl=contentDiv||article;" +
+            // Bước 3: Clone và loại bỏ các phần tử UI / skeleton / hidden
+            "var clone=targetEl.cloneNode(true);" +
+            "var rmSel='button,[role=\"button\"],[role=\"switch\"],form,script,style,svg,header,nav,footer,[hidden],[aria-hidden=\"true\"],[class*=\"animate-pulse\"],[class*=\"sr-only\"]';" +
+            "var rmEls=clone.querySelectorAll(rmSel);" +
+            "for(var ri=(rmEls.length-1);ri>=0;ri--){" +
+            "  try{var p=rmEls[ri].parentNode;if(p)p.removeChild(rmEls[ri]);}catch(e){}" +
             "}" +
-            "return result.join('\\n');" +
+            // Bước 4: Lấy <p> từ vùng nội dung (KHÔNG quét toàn trang)
+            "var ps=clone.querySelectorAll('p');" +
+            "var res=[];" +
+            "for(var pi=0;pi<ps.length;pi++){" +
+            "  var txt=((ps[pi].innerText||ps[pi].textContent)||'').trim();" +
+            "  if(txt.length>=10)res.push('<p>'+txt+'</p>');" +
+            "}" +
+            "if(res.length>=2)return res.join('\\n');" +
+            // Fallback: tách theo dòng trong article scope (KHÔNG toàn trang)
+            "var raw=((clone.innerText||clone.textContent)||'').trim();" +
+            "if(raw.length<30)return '';" +
+            "var lines=raw.split('\\n');" +
+            "res=[];" +
+            "for(var li=0;li<lines.length;li++){" +
+            "  var ln=lines[li].trim();" +
+            "  if(ln.length>=15)res.push('<p>'+ln+'</p>');" +
+            "}" +
+            "return res.join('\\n');" +
             "})()";
 
         var result = browser.callJs(jsCode, 8000);
         var content = "";
         if (result) {
-            // callJs trả về Document hoặc string tuỳ API
             try { content = result.text ? String(result.text()) : String(result); }
             catch (e) { content = String(result); }
         }

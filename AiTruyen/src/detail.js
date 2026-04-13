@@ -53,63 +53,80 @@ function execute(url) {
     var statusText = "";
     var desc = "";
 
-    // === Ưu tiên 1: Lấy từ __NEXT_DATA__ JSON ===
+    // === Ưu tiên 1: Trích từ __next_f RSC scripts (Next.js App Router không có __NEXT_DATA__) ===
     try {
-        var nextDataEl = doc.select("script#__NEXT_DATA__").first();
-        if (nextDataEl) {
-            var nextJson = nextDataEl.html();
-            if (nextJson && nextJson.length > 10) {
-                var nd = JSON.parse(nextJson);
-                var pp = nd && nd.props && nd.props.pageProps;
-                if (pp) {
-                    // story object thường ở pp.story hoặc pp.data
-                    var story = pp.story || pp.data || pp.item || null;
-                    if (story && typeof story === "object" && !story.length) {
-                        title = story.title || story.name || "";
-                        author = "";
-                        if (story.author) {
-                            if (typeof story.author === "string") {
-                                author = story.author;
-                            } else if (story.author.name) {
-                                author = story.author.name;
-                            } else if (story.author.username) {
-                                author = story.author.username;
-                            }
-                        }
-                        if (!author && story.authorName) author = story.authorName;
-                        if (!author && story.translator) author = story.translator;
+        var scripts = doc.select("script:not([src])");
+        for (var rscIdx = 0; rscIdx < scripts.size(); rscIdx++) {
+            var rscTxt = scripts.get(rscIdx).html();
+            if (!rscTxt || rscTxt.length < 50) continue;
+            if (rscTxt.indexOf(slug) < 0) continue;
 
-                        // Cover
-                        var rawCover = story.cover || story.thumbnail || story.image || story.coverUrl || story.coverImage || "";
-                        if (rawCover) cover = normalizeCover(rawCover);
+            // Tìm vị trí slug trong RSC data, rồi scan ~600 ký tự xung quanh để lấy các field
+            var posA = rscTxt.indexOf('"slug":"' + slug + '"');
+            var posB = rscTxt.indexOf('\\"slug\\":\\"' + slug + '\\"');
+            var pos = posA >= 0 ? posA : posB;
+            if (pos < 0) continue;
 
-                        // Status
-                        statusText = story.status || story.state || "";
-                        if (statusText === "ongoing") statusText = "Còn tiếp";
-                        else if (statusText === "completed") statusText = "Hoàn thành";
+            // Lấy window xung quanh slug để tìm các field liên quan
+            var start = Math.max(0, pos - 50);
+            var end = Math.min(rscTxt.length, pos + 800);
+            var window = rscTxt.substring(start, end);
 
-                        // Genres/Categories
-                        var cats = story.categories || story.genres || story.tags || [];
-                        if (cats && cats.length > 0) {
-                            var genArr = [];
-                            for (var ci = 0; ci < cats.length; ci++) {
-                                var cat = cats[ci];
-                                var catName = typeof cat === "string" ? cat : (cat.name || cat.title || "");
-                                if (catName && genArr.indexOf(catName) < 0) genArr.push(catName);
-                            }
-                            genres = genArr.join(", ");
-                        }
-
-                        // Description
-                        desc = story.description || story.summary || story.synopsis || "";
-                        desc = normalizeText(desc);
-                    }
+            // Title của story (gần slug)
+            if (!title) {
+                var tmA = window.match(/"title":"([^"]{3,200})"/);
+                var tmB = window.match(/\\"title\\":\\"([^\\"]{3,200})\\"/);
+                var titleRaw = (tmA && tmA[1]) || (tmB && tmB[1]) || "";
+                // Bỏ nếu là tiêu đề chương (thường bắt đầu bằng "Chương N" hoặc chứa "•")
+                if (titleRaw && !/^Ch[uư]/i.test(titleRaw) && titleRaw.indexOf(" \u2022 ") < 0) {
+                    title = titleRaw;
                 }
             }
+
+            // Author
+            if (!author) {
+                var auA = window.match(/"authorName":"([^"]{2,100})"/)
+                       || window.match(/"author":\{"name":"([^"]{2,100})"/);
+                var auB = window.match(/\\"authorName\\":\\"([^\\"]{2,100})\\"/)
+                       || window.match(/\\"author\\":\{\\"name\\":\\"([^\\"]{2,100})\\"/);
+                author = (auA && auA[1]) || (auB && auB[1]) || "";
+            }
+
+            // Cover từ media.aitruyen.net
+            if (!cover) {
+                var cvA = window.match(/(https?:\/\/media\.aitruyen\.net\/[^\s"\\]+\.(?:jpg|jpeg|png|webp))/);
+                if (!cvA) cvA = rscTxt.match(/(https?:\/\/media\.aitruyen\.net\/[^\s"\\]+\.(?:jpg|jpeg|png|webp))/);
+                if (cvA) cover = normalizeCover(cvA[1]);
+            }
+
+            // Status
+            if (!statusText) {
+                var stA = window.match(/"status":"([^"]{2,50})"/)
+                       || window.match(/"state":"([^"]{2,50})"/);
+                var stB = window.match(/\\"status\\":\\"([^\\"]{2,50})\\"/)
+                       || window.match(/\\"state\\":\\"([^\\"]{2,50})\\"/);
+                var rawSt = (stA && stA[1]) || (stB && stB[1]) || "";
+                if (rawSt) {
+                    if (/ongoing|dang|tiep/i.test(rawSt)) statusText = "Còn tiếp";
+                    else if (/complet|hoan/i.test(rawSt)) statusText = "Hoàn thành";
+                    else statusText = rawSt;
+                }
+            }
+
+            // Description (lấy ở phạm vi rộng hơn)
+            if (!desc) {
+                var descWin = rscTxt.substring(start, Math.min(rscTxt.length, pos + 2000));
+                var dsA = descWin.match(/"description":"((?:[^"\\]|\\.)*)"/);
+                var dsB = descWin.match(/\\"description\\":\\"((?:[^\\"\\\\]|\\\\.)*?)\\"/);
+                var rawDesc = (dsA && dsA[1]) || (dsB && dsB[1]) || "";
+                desc = normalizeText(rawDesc.replace(/\\n/g, " ").replace(/\\"/g, '"'));
+                if (desc.length < 10) desc = "";
+            }
+
+            if (title) break; // Đủ thông tin cơ bản, thoát vòng lặp script
         }
-    } catch (e) {
-        // JSON parse thất bại, tiếp tục fallback
-    }
+    } catch (e) {}
+
 
     // === Fallback: Parse từ DOM ===
 
