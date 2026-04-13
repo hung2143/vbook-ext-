@@ -1,16 +1,16 @@
 // chap.js - Lấy nội dung chương trên AiTruyen
 // URL dạng: https://aitruyen.net/truyen/[slug]/chuong-[n]
 //
-// AiTruyen dùng Next.js React Server Components (RSC/__next_f).
-// Nội dung chương lấy qua API: POST /api/chapters/{encodeURIComponent(chapterHandle)}/content
-// chapterHandle được nhúng trong __next_f RSC data của trang HTML.
-// API yêu cầu cookie session (người dùng phải đăng nhập qua Engine.newBrowser()).
+// Chiến lược:
+// 1. Thử lấy cookie từ localCookie (nếu đã đăng nhập qua browser của app)
+// 2. Nếu có cookie → gọi API /api/chapters/{handle}/content
+// 3. Nếu API thất bại hoặc không có cookie → dùng Engine.newBrowser() để load
+//    trang trực tiếp (browser đã có session từ lần đăng nhập trước) và trích DOM
 
 var HOST = "https://aitruyen.net";
-var LOGIN_MSG = "Vui lòng đăng nhập tại aitruyen.net để đọc truyện, sau đó thử lại.";
 
 /**
- * Lấy cookie session từ plugin WebView (cùng store với Engine.newBrowser).
+ * Lấy cookie session từ localCookie (chia sẻ với Engine.newBrowser).
  */
 function getSessionCookies() {
     try {
@@ -21,68 +21,74 @@ function getSessionCookies() {
 }
 
 /**
- * Mở trình duyệt trong ứng dụng để người dùng đăng nhập, chờ tối đa ~3 phút.
- * Trả về cookie sau khi đăng nhập (có thể rỗng nếu quá thời gian).
+ * Trích chapterHandle từ RSC data (script __next_f) trong HTML.
  */
-function doLogin(chapUrl) {
-    var cookieStr = "";
-    try {
-        var browser = Engine.newBrowser();
-        // Mở trang chương trong trình duyệt plugin (chia sẻ cookie với localCookie)
-        browser.launch(chapUrl, 8000);
-        // Chờ người dùng đăng nhập - poll mỗi 3 giây, tối đa 60 lần (~3 phút)
-        var maxTries = 60;
-        for (var i = 0; i < maxTries; i++) {
-            sleep(3000);
-            var c = getSessionCookies();
-            if (c && c.length > 10) {
-                cookieStr = c;
-                break;
-            }
-        }
-        browser.close();
-    } catch (e) {}
-    return cookieStr;
+function extractChapterHandle(html) {
+    var m = html.match(/\\\"chapterHandle\\\":\\\"(rh1\.[^\"\\]+)/)
+           || html.match(/"chapterHandle":"(rh1\.[^"]+)"/);
+    return m ? m[1] : "";
 }
 
-function execute(url) {
-    var m = url.match(/\/truyen\/([^/?#]+)\/chuong-(\d+)/);
-    if (!m) return null;
-    var storySlug = m[1];
-    var chapNum = m[2];
-    var chapUrl = HOST + "/truyen/" + storySlug + "/chuong-" + chapNum;
+/**
+ * Trích nội dung chapter từ DOM bằng browser (browser đã có session).
+ * Dùng khi API không hoạt động hoặc chưa đăng nhập qua API.
+ */
+function loadViaNewBrowser(chapUrl) {
+    var browser = null;
+    try {
+        browser = Engine.newBrowser();
+        var doc = browser.launch(chapUrl, 15000);
+        var content = "";
 
-    // Bước 1: Lấy HTML trang chương để trích chapterHandle từ RSC (__next_f) data
-    var pageResp = fetch(chapUrl, {
-        headers: {
-            "user-agent": UserAgent.chrome(),
-            "referer": HOST,
-            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "accept-language": "vi-VN,vi;q=0.9,en;q=0.8"
+        if (doc) {
+            // Thử các selector phổ biến của AiTruyen (Next.js render)
+            var selectors = [
+                ".chapter-content",
+                "[class*='chapter-content']",
+                "[class*='chapterContent']",
+                "[class*='content']",
+                "article",
+                "main"
+            ];
+            for (var i = 0; i < selectors.length; i++) {
+                try {
+                    var el = doc.select(selectors[i]);
+                    if (!el || el.isEmpty()) continue;
+                    var txt = el.first().text();
+                    if (txt && txt.length > 100) {
+                        content = el.first().html();
+                        break;
+                    }
+                } catch (se) {}
+            }
+
+            // Fallback: lấy toàn bộ body text
+            if (!content || content.length < 100) {
+                try {
+                    var body = doc.select("body").first();
+                    if (body) {
+                        var bodyTxt = body.text();
+                        if (bodyTxt && bodyTxt.length > 100) {
+                            content = body.html();
+                        }
+                    }
+                } catch (be) {}
+            }
         }
-    });
-    if (!pageResp || !pageResp.ok) return Response.error(chapUrl);
 
-    var doc = pageResp.html("utf-8");
-    if (!doc) return Response.error(chapUrl);
-    var pageHtml = doc.html() || "";
-
-    // chapterHandle nằm trong __next_f script dạng: \"chapterHandle\":\"rh1.xxx\"
-    var handleMatch = pageHtml.match(/\\"chapterHandle\\":\\"(rh1\.[^"\\]+)/)
-                   || pageHtml.match(/"chapterHandle":"(rh1\.[^"]+)"/);
-    if (!handleMatch) return Response.error(chapUrl);
-    var chapterHandle = handleMatch[1];
-
-    // Bước 2: Lấy cookie session từ plugin WebView
-    var cookieStr = getSessionCookies();
-
-    if (!cookieStr) {
-        // Chưa có cookie → tự động mở trình duyệt để người dùng đăng nhập
-        cookieStr = doLogin(chapUrl);
-        if (!cookieStr) return Response.error(LOGIN_MSG);
+        browser.close();
+        return content;
+    } catch (e) {
+        try { if (browser) browser.close(); } catch (_) {}
+        return "";
     }
+}
 
-    // Trích giá trị cookie aitruyen_bff_proof để dùng làm header bảo mật
+/**
+ * Gọi API content với cookie.
+ * Trả về chuỗi HTML nội dung, hoặc rỗng nếu thất bại.
+ */
+function callContentApi(chapUrl, chapterHandle, cookieStr) {
     var bffProof = "";
     var bffMatch = cookieStr.match(/(?:^|;)\s*aitruyen_bff_proof=([^;]+)/);
     if (bffMatch) {
@@ -90,7 +96,6 @@ function execute(url) {
         catch (e) { bffProof = bffMatch[1].trim(); }
     }
 
-    // Bước 3: Gọi API nội dung chương
     var contentUrl = HOST + "/api/chapters/" + encodeURIComponent(chapterHandle) + "/content";
     var apiHeaders = {
         "user-agent": UserAgent.chrome(),
@@ -102,66 +107,80 @@ function execute(url) {
     };
     if (bffProof) apiHeaders["x-aitruyen-browser-proof"] = bffProof;
 
-    var apiResp = fetch(contentUrl, {
-        method: "POST",
-        headers: apiHeaders,
-        body: "{}"
-    });
-
-    if (!apiResp || !apiResp.ok) {
-        // Có thể session hết hạn → mở lại trình duyệt để đăng nhập lại
-        cookieStr = doLogin(chapUrl);
-        if (!cookieStr) return Response.error(LOGIN_MSG);
-
-        // Cập nhật cookie và thử lại
-        bffProof = "";
-        var bffMatch2 = cookieStr.match(/(?:^|;)\s*aitruyen_bff_proof=([^;]+)/);
-        if (bffMatch2) {
-            try { bffProof = decodeURIComponent(bffMatch2[1].trim()); }
-            catch (e) { bffProof = bffMatch2[1].trim(); }
-        }
-        apiHeaders["cookie"] = cookieStr;
-        if (bffProof) apiHeaders["x-aitruyen-browser-proof"] = bffProof;
-
-        apiResp = fetch(contentUrl, {
+    try {
+        var apiResp = fetch(contentUrl, {
             method: "POST",
             headers: apiHeaders,
             body: "{}"
         });
-        if (!apiResp || !apiResp.ok) return Response.error(LOGIN_MSG);
-    }
+        if (!apiResp || !apiResp.ok) return "";
 
-    var json = apiResp.json();
-    if (!json) return Response.error(chapUrl);
+        var json = apiResp.json();
+        if (!json) return "";
+        if (json.status === "requires_auth") return "";
 
-    if (json.status === "requires_auth") {
-        // API từ chối auth → mở trình duyệt đăng nhập lại
-        cookieStr = doLogin(chapUrl);
-        if (!cookieStr) return Response.error(LOGIN_MSG);
-
-        var bffProof3 = "";
-        var bffMatch3 = cookieStr.match(/(?:^|;)\s*aitruyen_bff_proof=([^;]+)/);
-        if (bffMatch3) {
-            try { bffProof3 = decodeURIComponent(bffMatch3[1].trim()); }
-            catch (e) { bffProof3 = bffMatch3[1].trim(); }
-        }
-        apiHeaders["cookie"] = cookieStr;
-        if (bffProof3) apiHeaders["x-aitruyen-browser-proof"] = bffProof3;
-        else delete apiHeaders["x-aitruyen-browser-proof"];
-
-        var retryResp = fetch(contentUrl, {
-            method: "POST",
-            headers: apiHeaders,
-            body: "{}"
-        });
-        if (!retryResp || !retryResp.ok) return Response.error(LOGIN_MSG);
-        json = retryResp.json();
-        if (!json || json.status === "requires_auth") return Response.error(LOGIN_MSG);
-    }
-
-    var contentHtml = json.contentHtml;
-    if (!contentHtml || String(contentHtml).trim().length < 10) return Response.error(chapUrl);
-
-    return Response.success(String(contentHtml));
+        var contentHtml = json.contentHtml || json.content || json.html || "";
+        return String(contentHtml).trim();
+    } catch (e) {}
+    return "";
 }
 
+function execute(url) {
+    var m = url.match(/\/truyen\/([^/?#]+)\/chuong-(\d+)/);
+    if (!m) return null;
+    var storySlug = m[1];
+    var chapNum = m[2];
+    var chapUrl = HOST + "/truyen/" + storySlug + "/chuong-" + chapNum;
+
+    // === Bước 1: Thử lấy cookie từ localCookie ===
+    var cookieStr = getSessionCookies();
+
+    // === Bước 2: Nếu có cookie → thử lấy chapterHandle qua HTTP và gọi API ===
+    if (cookieStr) {
+        try {
+            var pageResp = fetch(chapUrl, {
+                headers: {
+                    "user-agent": UserAgent.chrome(),
+                    "referer": HOST,
+                    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "accept-language": "vi-VN,vi;q=0.9,en;q=0.8",
+                    "cookie": cookieStr
+                }
+            });
+
+            if (pageResp && pageResp.ok) {
+                var doc = pageResp.html("utf-8");
+                if (doc) {
+                    var pageHtml = doc.html() || "";
+                    var chapterHandle = extractChapterHandle(pageHtml);
+
+                    if (chapterHandle) {
+                        var apiContent = callContentApi(chapUrl, chapterHandle, cookieStr);
+                        if (apiContent && apiContent.length > 10) {
+                            return Response.success(apiContent);
+                        }
+                    }
+                }
+            }
+        } catch (e) {}
+
+        // API thất bại dù có cookie → thử browser (session có thể vẫn còn trong browser)
+        var browserContent = loadViaNewBrowser(chapUrl);
+        if (browserContent && browserContent.length > 50) {
+            return Response.success(browserContent);
+        }
+
+        // Nếu browser cũng thất bại
+        return Response.error("Không tải được nội dung. Vui lòng đăng nhập lại tại aitruyen.net rồi thử lại.");
+    }
+
+    // === Bước 3: Không có cookie → dùng browser trực tiếp ===
+    // Browser đã lưu session từ lần đăng nhập trước trên aitruyen.net
+    var browserContent = loadViaNewBrowser(chapUrl);
+    if (browserContent && browserContent.length > 50) {
+        return Response.success(browserContent);
+    }
+
+    // Chưa đăng nhập, hướng dẫn người dùng
+    return Response.error("Vui lòng đăng nhập tại aitruyen.net trên trình duyệt của ứng dụng, sau đó thử lại.");
+}
