@@ -37,6 +37,17 @@
       "description": "Đọc truyện trên trang https://aitruyen.net/ (yêu cầu đăng nhập tại trang nguồn)",
       "type": "novel",
       "locale": "vi_VN"
+    },
+    {
+      "name": "17 Tiểu thuyết",
+      "author": "Hung",
+      "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/m.1qxs.com/plugin.zip",
+      "version": 1,
+      "source": "https://m.1qxs.com/",
+      "icon": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/m.1qxs.com/icon.png",
+      "description": "Doc truyen tren trang 1QXS",
+      "type": "chinese_novel",
+      "locale": "zh_CN"
     }
   ]
 }

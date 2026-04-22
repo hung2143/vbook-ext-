@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "name": "17 Tiểu thuyết",
+    "author": "ivanzzz",
+    "version": 4,
+    "source": "https://m.1qxs.com/",
+    "regexp": "(?:m\\.)?1qxs\\.com/xs_1/\\d+(?:/\\d+(?:/\\d+)?)?/?(?:\\?.*)?$",
+    "description": "Doc truyen tren trang 1QXS",
+    "locale": "zh_CN",
+    "language": "javascript",
+    "type": "chinese_novel",
+    "encrypt": true
+  },
+  "script": {
+    "book": "book.js",
+    "home": "home.js",
+    "genre": "genre.js",
+    "detail": "detail.js",
+    "search": "search.js",
+    "toc": "toc.js",
+    "chap": "chap.js"
+  },
+  "config": {
+    "thread_num": 1,
+    "delay": 10000
+  }
+}
