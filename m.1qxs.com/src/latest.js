@@ -1,1 +1,87 @@
-2v26mm50PLDczaMzth3nXbQfpIwzlMfHQuarIAhvkDbeeLQ8XT341U6WMZtA9jdM6IF76HyyfwmAu4kgHLGoKUfDyQa9x0P2XxKhBXx8w0XRJLQgf9Grl50x0P2XxPmx0P1XxUfdjWPD5x0P2XxPfx0P2Xx5lNVgJa2IvLYK6qGYhP4UWHhJzvWHx0P2Xx9fq2RyhFx0P1XxlhbQzOc1cRWS4mH3dupVjIEl6TdV9wnry0yGqYoLW4A2FCLSqRP9x0P1XxqdS8xWNtUVnIwx0P2Xxt2x0P1XxWkaWoeZmLIDYNlFyWC6N8nt5wHNRtvYbXRbg9bpsDgsx0P2XxwDvRODiPhqA1wECJnGUhTi0X7aXUHHGLbEx0P1XxPPkX1KCDroN1Xvqop6L9c6oijOWQVzkHlKT5i9Z4vJ0MEx0P3Xx
+var HOST = "https://m.1qxs.com";
+
+function execute(url, page) {
+    var targetUrl = url;
+    if (page) {
+        targetUrl = url.replace(/\/\d+\.html$/, "/" + page + ".html");
+    }
+
+    var browser = Engine.newBrowser();
+    try {
+        browser.setUserAgent(UserAgent.android());
+        var doc = browser.launch(targetUrl, 15000);
+
+        if (!doc) {
+            var response = fetch(targetUrl, {
+                headers: {
+                    "user-agent": UserAgent.android(),
+                    "referer": HOST + "/",
+                    "accept-language": "zh-CN,zh;q=0.9"
+                }
+            });
+            if (!response.ok) return null;
+            doc = response.html();
+        }
+
+        if (!doc) return null;
+
+        var data = [];
+        doc.select("a[href*='/xs_1/']").forEach(function(e) {
+            var link = e.attr("href") || "";
+            if (!link.match(/\/xs_1\/\d+/)) return;
+
+            var name = e.select("h4, h3, .title, .name").text() || e.text();
+            name = name.trim();
+            if (!name || name.length < 2) return;
+
+            var cover = "";
+            var img = e.select("img").first();
+            if (img) {
+                cover = img.attr("data-src") || img.attr("src") || "";
+                if (cover.startsWith("//")) cover = "https:" + cover;
+                if (cover && !cover.startsWith("http")) cover = HOST + cover;
+            }
+
+            data.push({
+                name: name,
+                link: link,
+                host: HOST,
+                cover: cover,
+                description: ""
+            });
+        });
+
+        // Deduplicate
+        var seen = {};
+        var unique = [];
+        for (var i = 0; i < data.length; i++) {
+            if (!seen[data[i].link]) {
+                seen[data[i].link] = true;
+                unique.push(data[i]);
+            }
+        }
+
+        // Next page
+        var next = null;
+        var pageMatch = targetUrl.match(/\/(\d+)\.html$/);
+        if (pageMatch) {
+            var currentPage = parseInt(pageMatch[1]);
+            next = currentPage + 1;
+            var hasNext = false;
+            doc.select("a").forEach(function(a) {
+                var text = a.text();
+                if (text.indexOf("下一页") !== -1 || text.indexOf("»") !== -1) {
+                    hasNext = true;
+                }
+            });
+            if (!hasNext) next = null;
+        }
+
+        browser.close();
+        return Response.success(unique, next);
+    } catch (e) {
+        Console.log("latest error: " + e);
+        try { browser.close(); } catch(e2) {}
+        return null;
+    }
+}

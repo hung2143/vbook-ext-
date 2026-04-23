@@ -1,1 +1,117 @@
-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
+var HOST = "https://m.1qxs.com";
+
+function execute(url) {
+    // Normalize URL to mobile
+    url = url.replace(/https?:\/\/(www\.)?1qxs\.com/, HOST);
+    // Ensure trailing slash
+    if (!url.endsWith("/")) url = url + "/";
+
+    // Extract book ID from URL pattern /xs_1/BOOKID/
+    var bookIdMatch = url.match(/\/xs_1\/(\d+)/);
+    if (!bookIdMatch) return null;
+    var bookId = bookIdMatch[1];
+    var detailUrl = HOST + "/xs_1/" + bookId + "/";
+
+    // Try with browser first to bypass anti-bot
+    var browser = Engine.newBrowser();
+    try {
+        browser.setUserAgent(UserAgent.android());
+        var doc = browser.launch(detailUrl, 15000);
+
+        if (!doc) {
+            // Fallback: direct fetch with proper headers
+            var response = fetch(detailUrl, {
+                headers: {
+                    "user-agent": UserAgent.android(),
+                    "referer": HOST + "/",
+                    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "accept-language": "zh-CN,zh;q=0.9,en;q=0.8"
+                }
+            });
+            if (!response.ok) return null;
+            doc = response.html();
+        }
+
+        if (!doc) return null;
+
+        // Rate limit check
+        var bodyText = doc.text() || "";
+        if (bodyText.indexOf("访问太频繁") !== -1) {
+            sleep(30000);
+            doc = browser.launch(detailUrl, 15000);
+            if (!doc) return null;
+        }
+
+        // Extract book info
+        var name = doc.select("h1").first();
+        var title = name ? name.text().trim() : "";
+
+        // Cover image
+        var cover = "";
+        var coverImg = doc.select(".book-cover img, .cover img, .pic img, img[src*='cover'], img[src*='bookimg']").first();
+        if (coverImg) {
+            cover = coverImg.attr("src") || coverImg.attr("data-src") || "";
+            if (cover.startsWith("//")) cover = "https:" + cover;
+            if (cover && !cover.startsWith("http")) cover = HOST + cover;
+        }
+        if (!cover) {
+            // Try og:image meta
+            var ogImg = doc.select("meta[property='og:image']").attr("content");
+            if (ogImg) {
+                cover = ogImg;
+                if (cover.startsWith("//")) cover = "https:" + cover;
+            }
+        }
+
+        // Author - look for author text
+        var author = "";
+        var authorEl = doc.select(".author, .book-author").first();
+        if (authorEl) {
+            author = authorEl.text().replace(/作者[：:]\s*/g, "").trim();
+        }
+        if (!author) {
+            // Try from page text
+            var authorMatch = bodyText.match(/作者[：:]\s*([^\s\n]+)/);
+            if (authorMatch) author = authorMatch[1].trim();
+        }
+
+        // Description
+        var desc = "";
+        var descEl = doc.select(".book-intro, .intro, .desc, #intro").first();
+        if (descEl) {
+            desc = descEl.text().trim();
+        }
+        if (!desc) {
+            var metaDesc = doc.select("meta[name='description']").attr("content");
+            if (metaDesc) desc = metaDesc.trim();
+        }
+
+        // Detail info (status, word count, etc.)
+        var detail = "";
+        var detailEl = doc.select(".book-stats, .book-info, .info").first();
+        if (detailEl) {
+            detail = detailEl.html();
+        }
+
+        // Status (ongoing or completed)
+        var ongoing = true;
+        if (bodyText.indexOf("完结") !== -1 || bodyText.indexOf("完本") !== -1) {
+            ongoing = false;
+        }
+
+        return Response.success({
+            name: title,
+            cover: cover,
+            author: author,
+            description: desc || title,
+            detail: detail,
+            ongoing: ongoing,
+            host: HOST
+        });
+    } catch (e) {
+        Console.log("detail error: " + e);
+        return null;
+    } finally {
+        browser.close();
+    }
+}

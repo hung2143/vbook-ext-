@@ -1,1 +1,21 @@
-2v26mm50PLDczaMzth3nXbQfpIwzlMfHQuarIAhvkDbeeLQ8XT341U6WMZtA9jdM6IF76HyyfwmAu4kgHLGoKUfDyQa9x0P2XxKhBXx8w0XRJLQgf9Grl50x0P2XxPmx0P1XxUfdjWPD5x0P2XxPVC8Tx0P1Xx53Il8eKvptZv25rf7svtpxjjC7cdraKPoHDIkxZMrImiFuzywbpbE4jWYnWo97DvlUkuyeTVLHmpImXoIriFtt2JYDcVyzAe8hx0P1XxNmOcUfOWwAWqVnw7LkhVJTx0P2XxNLEnP5iWYErGav3cnHCZFyB0xx0P2XxC7O0A1Kv4rki0x0P2Xxgq1k9p1jjx0P1XxsuwBvIfWHg12tUFfxLfRw1FAiYnx0P1XxjhIVSh9jIO8eQdsm5v2loXydOt9gfgTEOrua0eMDwXFZsNdnsZZfh8canqsQD0vx1WmuXwox0P2XxFeZglPk2x0P2XxFdG3x0P1XxucP81mFx0P2XxNaynqeUheWx0P2XxYoD0QK5Rvqy6xAQsnzqItQi9by2jBD1UrcauEaMJJNXyPQtQcBJ0FNd9ax0P2XxY54Ne9x0P2XxjFth67s62Qaxi5SDehDLUGULtQ8ywLbj4sxtLypasrvCpMBJtUNgcllOsK7CXRB7vmHwhRTnfxLqdqsvKfoV4gjLhKXsg599esorFaxmt0zRsDj6sqzFeN7x9MV8BRRjEsAWEwyVonx0P1XxbSzke1wua5YmZHllQY108Gi6hJcuKgHu0WxBDuL6x0P1XxaVETU1A8LpLHra7vx0P1XxV47FIvcGEeebcqZNfEZK1hZUx0P1XxFIDx0wLdN07VbzV1Pc6jNPtTepuJK3L7xAcQARB7RCur4pga8r6gnp7mNerOL6XwHvoBbP62kaCsc8a3KpUvq2nqPxlfJYqsxZl2K7boOJwDW2Kk0tx0P2XxUjVx7HQsiqFexUrEcdErGLtgLBNamuN1FJyn6GZx0P2XxWVjvGevSBjZlMbw8d1J9OU6Lr0GjUGiJQQZ1k8IonF6B5FBG9vaVpljMt9pI9Hpx0P2Xxjha3ayNux3ZNvbCQ4u8IL8bmtB4TRgehx0P2XxWRFDzbPPY5NDgIgC9ZmcD9EBjvIGYtO9ex0P1XxCx0P1XxW4hAe8jFBcaDNWhO8x0P1Xxi1qESkUHvuSYiQBNpHRcx0P1XxjH55owOVOVbqz1eN5SvBe9FMHx0P2Xx7HNnu9HaPAMDyHl8C03sRmZ1wuvx0P2XxXHsYU0nyBlAVQKFLK0365UqhnSKFmjPFmWl2tCOdnMsemMBO2TZ3MTx0P2XxcavkhrC9g8SxTgPXeuRcgtN1sE1d4QIgGwqzpljBIfjx0P1Xx6TPY9V06vbM20dTqhTw7RRl9E8BqZFoOP9yQkUO584PDSdHyScFBcSaWx0P1XxCamMmOFOHyA9gAuYoLTKZ04TW8F1YvtQBORxRBsgx0P3Xxx0P3Xx
+var HOST = "https://m.1qxs.com";
+
+function execute() {
+    return Response.success([
+        { title: "都市", input: HOST + "/xclass_1/1/1.html", script: "gen.js" },
+        { title: "玄幻", input: HOST + "/xclass_1/2/1.html", script: "gen.js" },
+        { title: "仙侠", input: HOST + "/xclass_1/3/1.html", script: "gen.js" },
+        { title: "科幻", input: HOST + "/xclass_1/4/1.html", script: "gen.js" },
+        { title: "历史", input: HOST + "/xclass_1/5/1.html", script: "gen.js" },
+        { title: "游戏", input: HOST + "/xclass_1/6/1.html", script: "gen.js" },
+        { title: "武侠", input: HOST + "/xclass_1/7/1.html", script: "gen.js" },
+        { title: "军事", input: HOST + "/xclass_1/8/1.html", script: "gen.js" },
+        { title: "悬疑", input: HOST + "/xclass_1/9/1.html", script: "gen.js" },
+        { title: "言情", input: HOST + "/xclass_2/1/1.html", script: "gen.js" },
+        { title: "穿越", input: HOST + "/xclass_2/2/1.html", script: "gen.js" },
+        { title: "古言", input: HOST + "/xclass_2/3/1.html", script: "gen.js" },
+        { title: "宫斗", input: HOST + "/xclass_2/4/1.html", script: "gen.js" },
+        { title: "仙侠奇缘", input: HOST + "/xclass_2/5/1.html", script: "gen.js" },
+        { title: "现代", input: HOST + "/xclass_2/6/1.html", script: "gen.js" }
+    ]);
+}

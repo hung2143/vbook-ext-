@@ -1,1 +1,70 @@
-2v26mm50PLDczaMzth3nXbQfpIwzlMfHQuarIAhvkDYZNVPFKdsc8hyt9iBqvrH42mmlx0P2XxkySHf9F5e1ecQWGiRJW4PHdhM95gl18Sbx0P2Xx54CDsDYlBVkmXN2q4AmKViKcOLh3UQW83g3XruuIX7zDShye4KoTXDssbUV2ccBs2MMiMk7ZgBX1x0P2Xxgt9WNRziX2yoFCGWA0x0P2XxTGAWPjJx0P1XxdWZx0P2XxX8tRzp5hN4qB8o5dazjzhmyB4W4Ot5GkbgkB9tdjegwjzNPpTaCbt36ljyMn3Wxnyg7CcV9L8KkVgwIcpJC39MkO37capMnYix0P2Xxx0P2Xx7yyY48GSqBJ0Ya9f7dUCUaTzVBUBnLTmJqkfPx0P1XxWUxAevAUBDki8B5SZjx0P1XxnS4QAFvHNy5vFNNJKnjZVIB7VtAYXSsX8EpB4MF3B3SgHpqqV6Mx0P2Xxusyi7jiTx0P2XxojsAT0hQelhkp8vlTpywVLx0P2Xxsg0eqKJssmo7vlu7Ry10w4KC8YuOBnZ4MjeEBUXHx0P2XxSpyZqtatuM7Vx5rJLmZu
+var HOST = "https://m.1qxs.com";
+
+function execute(key, page) {
+    var searchUrl = HOST + "/s.html?s=" + encodeURIComponent(key);
+    if (page) {
+        searchUrl += "&page=" + page;
+    }
+
+    var browser = Engine.newBrowser();
+    try {
+        browser.setUserAgent(UserAgent.android());
+        var doc = browser.launch(searchUrl, 15000);
+
+        if (!doc) {
+            var response = fetch(searchUrl, {
+                headers: {
+                    "user-agent": UserAgent.android(),
+                    "referer": HOST + "/",
+                    "accept-language": "zh-CN,zh;q=0.9"
+                }
+            });
+            if (!response.ok) return null;
+            doc = response.html();
+        }
+
+        if (!doc) return null;
+
+        var data = [];
+        doc.select("a[href*='/xs_1/']").forEach(function(e) {
+            var link = e.attr("href") || "";
+            if (!link.match(/\/xs_1\/\d+/)) return;
+
+            var name = e.text().trim();
+            if (!name || name.length < 2) return;
+
+            var cover = "";
+            var img = e.select("img").first();
+            if (img) {
+                cover = img.attr("data-src") || img.attr("src") || "";
+                if (cover.startsWith("//")) cover = "https:" + cover;
+                if (cover && !cover.startsWith("http")) cover = HOST + cover;
+            }
+
+            data.push({
+                name: name,
+                link: link,
+                host: HOST,
+                cover: cover,
+                description: ""
+            });
+        });
+
+        // Deduplicate by link
+        var seen = {};
+        var unique = [];
+        for (var i = 0; i < data.length; i++) {
+            if (!seen[data[i].link]) {
+                seen[data[i].link] = true;
+                unique.push(data[i]);
+            }
+        }
+
+        browser.close();
+        return Response.success(unique);
+    } catch (e) {
+        Console.log("search error: " + e);
+        try { browser.close(); } catch(e2) {}
+        return null;
+    }
+}

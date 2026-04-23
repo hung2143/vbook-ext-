@@ -1,1 +1,10 @@
-2v26mm50PLDczaMzth3nXbQfpIwzlMfHQuarIAhvkDYKx0P1XxwN3x0P1Xx4n5Ey18McYHJcIBobUgHsux0P1Xxx0P1XxZzc2KiHA2qXIoqyTsTldW8yym3r3mRx0P2XxRMDgWNbQcy6J6lClgr4ewA3fYMqS2KE6YgswQFmhrN2bxiO2SXIG5dTrnq5pUx0P1XxfydhoAuN0x0P2XxScsvdYKx0P1XxAS8ncQYe1hodc7WtH83UHuYa2nqmh7x0P2XxhWV8HjtEXIv6y29ecNvBklqV0Gby5DiDDgJyhyLT8ax0P1Xxtcsx0P1Xx8EDLSEG3LXrfBSx0P2XxIGE3nQaYqWyx0P2XxVT2DHVJ92X6RV9lWfyx0P1XxEL31R6VYQeDnqO6DbXYTq4YWvkqKw9qOfcTFU1q6T9e35x0P2Xx7Hz6Ex0P1Xx69VOTG17lSyysnNmrWVqNgNqOSx0P2XxQHqiLE0FJ4aNVjfuQXQTq99VhVWTcfE8ty79FQ3DaAss49x0P1XxCEiax0P1XxLBXDm1bkeBVxjgL9vIfcR93qLy4EHKx0P2Xx4CXGx0P1XxQhREraTUY48JByXNHUwu12yTS3GWsv3x0P1Xx9z91WS2rVrkIO2N8nTAwRZ1i0B7Mai9TYDFGtpNDVl7oSpyTy1WfsLBTDv0bssmQPfWw9mBniheeR7P0ufThjJe5yCStb8tEQrYBpj8LaNCx0P2XxTld7BGF00MEqBzk2vTDtdFn2PNeEdsuEBZmZVvphqYffYEEeR8qnrfcdF3c1PbbaTtE6aRZqZWEWkB3tzdN8YtHVUXdsfCQK46T3JRqgCVx0P1Xxbx0P2XxWXxZOGE9SipqG1Us7g2PxLgzux0P1XxVxzoJ55DWBWmYDVTE0j5LJx0P1Xx4oUOwkH6j91FgTkIcxVfzosdsjDkHAfA8lNey8eEdvuOu95IijFaYBkuQOLpEx0P2XxC5ERT6DQBrt7Vox0P1XxCFBZyOhXcjp4CQiSRWCTDw3c8ltCMCet4AjRIDfm5xUIoCzw2pJQaNauJ2kJDei6Wg77ERrf42dx0P2XxW5P1Ctx6Ph7s7GrM3cfZgzfWodPHEhiv8khFx0P1XxRP6YO3UWG2FBtafTKcAtwmopQGkroVtevZTQLBZ8x0P3Xx
+var HOST = "https://m.1qxs.com";
+
+function execute() {
+    return Response.success([
+        { title: "男生频道", input: HOST + "/xclass_1/0/1.html", script: "book.js" },
+        { title: "女生频道", input: HOST + "/xclass_2/0/1.html", script: "book.js" },
+        { title: "最新更新", input: HOST + "/top_1/0/1.html", script: "latest.js" },
+        { title: "排行榜", input: HOST + "/top_1/1/1.html", script: "latest.js" }
+    ]);
+}

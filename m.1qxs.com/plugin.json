@@ -1,15 +1,14 @@
 {
   "metadata": {
     "name": "17 Tiểu thuyết",
-    "author": "ivanzzz",
-    "version": 4,
+    "author": "Hung",
+    "version": 2,
     "source": "https://m.1qxs.com/",
     "regexp": "(?:m\\.)?1qxs\\.com/xs_1/\\d+(?:/\\d+(?:/\\d+)?)?/?(?:\\?.*)?$",
     "description": "Doc truyen tren trang 1QXS",
     "locale": "zh_CN",
     "language": "javascript",
-    "type": "chinese_novel",
-    "encrypt": true
+    "type": "chinese_novel"
   },
   "script": {
     "book": "book.js",
@@ -17,11 +16,12 @@
     "genre": "genre.js",
     "detail": "detail.js",
     "search": "search.js",
+    "page": "page.js",
     "toc": "toc.js",
     "chap": "chap.js"
   },
   "config": {
     "thread_num": 1,
-    "delay": 10000
+    "delay": 15000
   }
 }

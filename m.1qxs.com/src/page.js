@@ -1,1 +1,14 @@
-2v26mm50PLDczaMzth3nXbQfpIwzlMfHQuarIAhvkDYLOqgBAx0P2XxrKkPx0P1XxQux0P2XxHjVBXEkonr0eBL99o9LL7fj38cBYtW3b2LqndUV7dA4JjYsVox0P1XxB2Py4Wrwrx0P1XxeyyTBIIZcFPID9XAUqE8kQ8QTkrnQcSzlSHsQbMSnQzOzhBUqH7yiczKx0P1XxumqVUw2iAAf1x0P1XxIWaiJJl0VNzfbf8JR78w7fT515qx0P1XxMlvx0P2Xxx7HfdHAkQM2NH4x0P2XxARwGBwZeHAx0P1Xxf3GoSuUfjgHhuMEgx0P2XxQlqZJxbtR86lBYcyv0iF3JANOWKr2KyEonxmyBkA0gn1cnm6EIDYpsKaQiqu0whZQPyUzYdx0P1XxsXw31gQ9y06PdOvU34kfsrkYvThPCt6ccx0P2XxuFb2Vjoz2KkxjOYRLx0P2XxjVuUTgUqQ2uQbdUx0P2XxPuAx0P3Xxx0P3Xx
+var HOST = "https://m.1qxs.com";
+
+function execute(url) {
+    // Extract book ID
+    var bookIdMatch = url.match(/\/xs_1\/(\d+)/);
+    if (!bookIdMatch) return null;
+    var bookId = bookIdMatch[1];
+
+    // Pages are defined by catalog page sections
+    // Return catalog page with all chapters
+    return Response.success([
+        HOST + "/catalog_1/" + bookId
+    ]);
+}
