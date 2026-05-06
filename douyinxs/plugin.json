@@ -2,7 +2,7 @@
   "metadata": {
     "name": "douyinxs",
     "author": "Hung",
-    "version": 1,
+    "version": 2,
     "source": "https://m.douyinxs.com",
     "regexp": "(www.|m.)?douyinxs.com/bqg/\\d+/?$",
     "description": "",
