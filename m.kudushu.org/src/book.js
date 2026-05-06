@@ -17,13 +17,40 @@ function normalizeCover(url) {
     return HOST + "/" + url;
 }
 
+function isCloudflare(doc) {
+    if (!doc) return true;
+    var text = doc.text() || "";
+    if (text.indexOf("Just a moment") !== -1) return true;
+    if (text.indexOf("cf_chl") !== -1) return true;
+    if (text.indexOf("Checking your browser") !== -1) return true;
+    if (text.indexOf("Enable JavaScript and cookies") !== -1) return true;
+    return false;
+}
+
 function loadDoc(url, referer) {
-    // Strategy 1: Browser (bypass anti-bot)
     var browser = Engine.newBrowser();
     try {
         browser.setUserAgent(UserAgent.android());
-        var doc = browser.launch(url, 15000);
-        if (doc) {
+
+        // First launch with long timeout for Cloudflare challenge
+        var doc = browser.launch(url, 30000);
+
+        // Check if still on Cloudflare challenge page
+        if (isCloudflare(doc)) {
+            Console.log("Cloudflare detected, waiting for challenge...");
+            sleep(10000);
+            // Re-launch after waiting
+            doc = browser.launch(url, 30000);
+        }
+
+        // Second check
+        if (isCloudflare(doc)) {
+            Console.log("Still on Cloudflare, waiting longer...");
+            sleep(15000);
+            doc = browser.launch(url, 30000);
+        }
+
+        if (doc && !isCloudflare(doc)) {
             browser.close();
             return doc;
         }
@@ -32,22 +59,29 @@ function loadDoc(url, referer) {
     }
     try { browser.close(); } catch (e2) {}
 
-    // Strategy 2: Fallback to fetch
-    var response = fetch(url, {
-        headers: {
-            "user-agent": UserAgent.android(),
-            "referer": referer || HOST + "/",
-            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "accept-language": "zh-CN,zh;q=0.9"
+    // Fallback to fetch (unlikely to work with CF but try anyway)
+    try {
+        var response = fetch(url, {
+            headers: {
+                "user-agent": UserAgent.android(),
+                "referer": referer || HOST + "/",
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "accept-language": "zh-CN,zh;q=0.9"
+            }
+        });
+        if (response.ok) {
+            var fdoc = response.html();
+            if (!isCloudflare(fdoc)) return fdoc;
         }
-    });
-    if (response.ok) return response.html();
+    } catch (e3) {}
+
     return null;
 }
 
 function parseArticles(doc) {
     var data = [];
 
+    // Strategy 1: .article items (mobile layout)
     var items = doc.select(".article");
     if (items.size() > 0) {
         items.forEach(function(item) {
@@ -73,6 +107,7 @@ function parseArticles(doc) {
         return data;
     }
 
+    // Strategy 2: .articlegeneral items (search result layout)
     doc.select(".articlegeneral").forEach(function(item) {
         var link = item.select(".p2 a").attr("href");
         var name = item.select(".p2 a").text();
@@ -93,17 +128,46 @@ function parseArticles(doc) {
         });
     });
 
-    // Fallback: try generic book list selectors
+    // Strategy 3: Try list-item pattern
     if (data.length === 0) {
+        doc.select(".list-item, li.item").forEach(function(item) {
+            var a = item.select("a[href*='/book/']").first();
+            if (!a) a = item.select("a[href*='/html/']").first();
+            if (!a) return;
+
+            var href = a.attr("href") || "";
+            var name = (a.text() || "").replace(/\s+/g, " ").trim();
+            if (!name || name.length < 2) return;
+
+            var cover = "";
+            var img = item.select("img").first();
+            if (img) cover = normalizeCover(img.attr("data-src") || img.attr("src"));
+
+            data.push({
+                name: name,
+                link: normalizeUrl(href),
+                host: HOST,
+                cover: cover,
+                description: ""
+            });
+        });
+    }
+
+    // Strategy 4: Generic book links
+    if (data.length === 0) {
+        var seen = {};
         doc.select("a[href*='/book/']").forEach(function(a) {
             var href = a.attr("href") || "";
             if (!href.match(/\/book\/\d+/)) return;
             var name = (a.text() || "").replace(/\s+/g, " ").trim();
             if (!name || name.length < 2) return;
+            var fullUrl = normalizeUrl(href);
+            if (seen[fullUrl]) return;
+            seen[fullUrl] = true;
 
             data.push({
                 name: name,
-                link: normalizeUrl(href),
+                link: fullUrl,
                 host: HOST,
                 cover: "",
                 description: ""
@@ -118,7 +182,7 @@ function findNextPage(doc, currentUrl) {
     var nextHref = "";
     doc.select("a").forEach(function(a) {
         var text = (a.text() || "").replace(/\s+/g, "").trim();
-        if (text === "下页" || text === "下一页" || text === "下一頁") {
+        if (text === "下页" || text === "下一页" || text === "下一頁" || text === "»") {
             nextHref = a.attr("href") || "";
         }
     });

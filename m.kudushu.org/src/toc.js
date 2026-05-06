@@ -21,29 +21,27 @@ function getBookId(url) {
     return "";
 }
 
-function loadDoc(url, referer) {
-    // Strategy 1: Browser (bypass anti-bot)
+function isCloudflare(doc) {
+    if (!doc) return true;
+    var text = doc.text() || "";
+    return text.indexOf("Just a moment") !== -1 || text.indexOf("Enable JavaScript and cookies") !== -1;
+}
+
+function browserLoad(url) {
     var browser = Engine.newBrowser();
     try {
         browser.setUserAgent(UserAgent.android());
-        var doc = browser.launch(url, 15000);
-        if (doc) {
-            browser.close();
-            return doc;
-        }
-    } catch (e) {
-        Console.log("toc browser error: " + e);
-    }
+        var doc = browser.launch(url, 30000);
+        if (isCloudflare(doc)) { sleep(10000); doc = browser.launch(url, 30000); }
+        if (isCloudflare(doc)) { sleep(15000); doc = browser.launch(url, 30000); }
+        if (doc && !isCloudflare(doc)) { browser.close(); return doc; }
+    } catch (e) { Console.log("toc browser error: " + e); }
     try { browser.close(); } catch (e2) {}
 
-    // Strategy 2: Fallback to fetch
-    var response = fetch(url, {
-        headers: {
-            "user-agent": UserAgent.android(),
-            "referer": referer || HOST + "/"
-        }
-    });
-    if (response.ok) return response.html();
+    try {
+        var resp = fetch(url, { headers: { "user-agent": UserAgent.android(), "referer": HOST + "/" } });
+        if (resp.ok) { var fd = resp.html(); if (!isCloudflare(fd)) return fd; }
+    } catch (e3) {}
     return null;
 }
 
@@ -67,12 +65,11 @@ function execute(url) {
     if (!bookId) return null;
 
     var baseUrl = HOST + "/book/" + bookId + "/";
-    var doc = loadDoc(baseUrl, HOST + "/");
+    var doc = browserLoad(baseUrl);
     if (!doc) return null;
 
     var data = [];
     var seen = {};
-
     addChapters(doc, bookId, data, seen);
 
     var pages = [];
@@ -88,9 +85,8 @@ function execute(url) {
     for (var p = 0; p < pages.length; p++) {
         var pageUrl = pages[p];
         if (pageUrl === baseUrl) continue;
-
-        sleep(2000);
-        var pageDoc = loadDoc(pageUrl, baseUrl);
+        sleep(3000);
+        var pageDoc = browserLoad(pageUrl);
         if (!pageDoc) continue;
         addChapters(pageDoc, bookId, data, seen);
     }

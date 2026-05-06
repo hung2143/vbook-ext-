@@ -8,31 +8,34 @@ function normalizeUrl(link) {
     return HOST + "/" + link;
 }
 
-function loadDoc(url, referer) {
-    // Strategy 1: Browser (bypass anti-bot)
+function isCloudflare(doc) {
+    if (!doc) return true;
+    var text = doc.text() || "";
+    return text.indexOf("Just a moment") !== -1 || text.indexOf("Enable JavaScript and cookies") !== -1;
+}
+
+function browserLoad(url, referer) {
     var browser = Engine.newBrowser();
     try {
         browser.setUserAgent(UserAgent.android());
-        var doc = browser.launch(url, 15000);
-        if (doc) {
-            browser.close();
-            return doc;
-        }
-    } catch (e) {
-        Console.log("chap browser error: " + e);
-    }
+        var doc = browser.launch(url, 30000);
+        if (isCloudflare(doc)) { sleep(10000); doc = browser.launch(url, 30000); }
+        if (isCloudflare(doc)) { sleep(15000); doc = browser.launch(url, 30000); }
+        if (doc && !isCloudflare(doc)) { browser.close(); return doc; }
+    } catch (e) { Console.log("chap browser error: " + e); }
     try { browser.close(); } catch (e2) {}
 
-    // Strategy 2: Fallback to fetch
-    var response = fetch(url, {
-        headers: {
-            "user-agent": UserAgent.android(),
-            "referer": referer || HOST + "/",
-            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "accept-language": "zh-CN,zh;q=0.9"
-        }
-    });
-    if (response.ok) return response.html();
+    try {
+        var resp = fetch(url, {
+            headers: {
+                "user-agent": UserAgent.android(),
+                "referer": referer || HOST + "/",
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "accept-language": "zh-CN,zh;q=0.9"
+            }
+        });
+        if (resp.ok) { var fd = resp.html(); if (!isCloudflare(fd)) return fd; }
+    } catch (e3) {}
     return null;
 }
 
@@ -55,7 +58,6 @@ function findNextPage(doc, basePath) {
             nextHref = a.attr("href") || "";
         }
     });
-
     if (!nextHref) return "";
     if (nextHref.indexOf(basePath + "_") === -1) return "";
     return normalizeUrl(nextHref);
@@ -75,7 +77,7 @@ function execute(url) {
 
     while (currentUrl && guard < 20) {
         guard++;
-        var doc = loadDoc(currentUrl, url);
+        var doc = browserLoad(currentUrl, url);
         if (!doc) break;
 
         var contentEl = doc.select("#novelcontent, .novelcontent").first();
@@ -86,7 +88,7 @@ function execute(url) {
         var nextUrl = findNextPage(doc, basePath);
         if (!nextUrl) break;
 
-        sleep(2000);
+        sleep(3000);
         currentUrl = nextUrl;
     }
 

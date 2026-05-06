@@ -22,9 +22,15 @@ function getBookId(url) {
     return "";
 }
 
+function isCloudflare(doc) {
+    if (!doc) return true;
+    var text = doc.text() || "";
+    return text.indexOf("Just a moment") !== -1 || text.indexOf("Enable JavaScript and cookies") !== -1;
+}
+
 function extractInfoText(doc, label) {
     var text = "";
-    doc.select(".infotype p").forEach(function(p) {
+    doc.select(".infotype p, .book-info p, .info p").forEach(function(p) {
         var t = (p.text() || "").trim();
         if (t.indexOf(label) === 0) {
             text = t.replace(label, "").replace(/^[：:]/, "").trim();
@@ -39,33 +45,26 @@ function execute(url) {
     if (!bookId) return null;
 
     var detailUrl = HOST + "/book/" + bookId + "/";
-
-    // Strategy 1: Browser (bypass anti-bot)
     var doc = null;
     var browser = Engine.newBrowser();
     try {
         browser.setUserAgent(UserAgent.android());
-        doc = browser.launch(detailUrl, 15000);
-        browser.close();
-    } catch (e) {
-        Console.log("detail browser error: " + e);
-        try { browser.close(); } catch (e2) {}
-    }
+        doc = browser.launch(detailUrl, 30000);
+        if (isCloudflare(doc)) { sleep(10000); doc = browser.launch(detailUrl, 30000); }
+        if (isCloudflare(doc)) { sleep(15000); doc = browser.launch(detailUrl, 30000); }
+    } catch (e) { Console.log("detail error: " + e); }
+    try { browser.close(); } catch (e2) {}
 
-    // Strategy 2: Fallback to fetch
-    if (!doc) {
-        var response = fetch(detailUrl, {
-            headers: {
-                "user-agent": UserAgent.android(),
-                "referer": HOST + "/"
-            }
-        });
-        if (response.ok) doc = response.html();
+    if (!doc || isCloudflare(doc)) {
+        try {
+            var resp = fetch(detailUrl, { headers: { "user-agent": UserAgent.android(), "referer": HOST + "/" } });
+            if (resp.ok) { var fd = resp.html(); if (!isCloudflare(fd)) doc = fd; }
+        } catch (e3) {}
     }
-
-    if (!doc) return null;
+    if (!doc || isCloudflare(doc)) return null;
 
     var title = doc.select(".cataloginfo h3").text().trim();
+    if (!title) title = doc.select("h1").text().trim();
     if (!title) title = doc.select("meta[property='og:title']").attr("content") || "";
 
     var cover = doc.select(".infohead .pic img").attr("src") || "";
@@ -86,7 +85,7 @@ function execute(url) {
 
     var status = doc.select("meta[property='og:novel:status']").attr("content") || "";
     var ongoing = true;
-    if (status) ongoing = status.indexOf("连载") !== -1;
+    if (status.indexOf("完结") !== -1 || status.indexOf("完本") !== -1) ongoing = false;
 
     var detailParts = [];
     if (author) detailParts.push("Tac gia: " + author);
@@ -95,12 +94,8 @@ function execute(url) {
     if (latest) detailParts.push("Moi nhat: " + latest);
 
     return Response.success({
-        name: title,
-        cover: cover,
-        author: author,
-        description: desc || title,
-        detail: detailParts.join("<br>"),
-        ongoing: ongoing,
-        host: HOST
+        name: title, cover: cover, author: author,
+        description: desc || title, detail: detailParts.join("<br>"),
+        ongoing: ongoing, host: HOST
     });
 }
