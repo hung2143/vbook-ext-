@@ -21,6 +21,32 @@ function getBookId(url) {
     return "";
 }
 
+function loadDoc(url, referer) {
+    // Strategy 1: Browser (bypass anti-bot)
+    var browser = Engine.newBrowser();
+    try {
+        browser.setUserAgent(UserAgent.android());
+        var doc = browser.launch(url, 15000);
+        if (doc) {
+            browser.close();
+            return doc;
+        }
+    } catch (e) {
+        Console.log("toc browser error: " + e);
+    }
+    try { browser.close(); } catch (e2) {}
+
+    // Strategy 2: Fallback to fetch
+    var response = fetch(url, {
+        headers: {
+            "user-agent": UserAgent.android(),
+            "referer": referer || HOST + "/"
+        }
+    });
+    if (response.ok) return response.html();
+    return null;
+}
+
 function addChapters(doc, bookId, data, seen) {
     var selector = "a[href*='/html/" + bookId + "/']";
     doc.select(selector).forEach(function(a) {
@@ -41,16 +67,9 @@ function execute(url) {
     if (!bookId) return null;
 
     var baseUrl = HOST + "/book/" + bookId + "/";
-    var response = fetch(baseUrl, {
-        headers: {
-            "user-agent": UserAgent.android(),
-            "referer": HOST + "/"
-        }
-    });
+    var doc = loadDoc(baseUrl, HOST + "/");
+    if (!doc) return null;
 
-    if (!response.ok) return null;
-
-    var doc = response.html();
     var data = [];
     var seen = {};
 
@@ -70,15 +89,9 @@ function execute(url) {
         var pageUrl = pages[p];
         if (pageUrl === baseUrl) continue;
 
-        sleep(1000);
-        var resp = fetch(pageUrl, {
-            headers: {
-                "user-agent": UserAgent.android(),
-                "referer": baseUrl
-            }
-        });
-        if (!resp.ok) continue;
-        var pageDoc = resp.html();
+        sleep(2000);
+        var pageDoc = loadDoc(pageUrl, baseUrl);
+        if (!pageDoc) continue;
         addChapters(pageDoc, bookId, data, seen);
     }
 

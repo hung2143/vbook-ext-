@@ -8,7 +8,22 @@ function normalizeUrl(link) {
     return HOST + "/" + link;
 }
 
-function fetchDoc(url, referer) {
+function loadDoc(url, referer) {
+    // Strategy 1: Browser (bypass anti-bot)
+    var browser = Engine.newBrowser();
+    try {
+        browser.setUserAgent(UserAgent.android());
+        var doc = browser.launch(url, 15000);
+        if (doc) {
+            browser.close();
+            return doc;
+        }
+    } catch (e) {
+        Console.log("chap browser error: " + e);
+    }
+    try { browser.close(); } catch (e2) {}
+
+    // Strategy 2: Fallback to fetch
     var response = fetch(url, {
         headers: {
             "user-agent": UserAgent.android(),
@@ -18,16 +33,7 @@ function fetchDoc(url, referer) {
         }
     });
     if (response.ok) return response.html();
-
-    var browser = Engine.newBrowser();
-    try {
-        browser.setUserAgent(UserAgent.android());
-        return browser.launch(url, 15000);
-    } catch (e) {
-        return null;
-    } finally {
-        try { browser.close(); } catch (e2) {}
-    }
+    return null;
 }
 
 function cleanContent(html) {
@@ -69,7 +75,7 @@ function execute(url) {
 
     while (currentUrl && guard < 20) {
         guard++;
-        var doc = fetchDoc(currentUrl, url);
+        var doc = loadDoc(currentUrl, url);
         if (!doc) break;
 
         var contentEl = doc.select("#novelcontent, .novelcontent").first();
@@ -80,7 +86,7 @@ function execute(url) {
         var nextUrl = findNextPage(doc, basePath);
         if (!nextUrl) break;
 
-        sleep(1200);
+        sleep(2000);
         currentUrl = nextUrl;
     }
 

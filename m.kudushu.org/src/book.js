@@ -17,6 +17,34 @@ function normalizeCover(url) {
     return HOST + "/" + url;
 }
 
+function loadDoc(url, referer) {
+    // Strategy 1: Browser (bypass anti-bot)
+    var browser = Engine.newBrowser();
+    try {
+        browser.setUserAgent(UserAgent.android());
+        var doc = browser.launch(url, 15000);
+        if (doc) {
+            browser.close();
+            return doc;
+        }
+    } catch (e) {
+        Console.log("book browser error: " + e);
+    }
+    try { browser.close(); } catch (e2) {}
+
+    // Strategy 2: Fallback to fetch
+    var response = fetch(url, {
+        headers: {
+            "user-agent": UserAgent.android(),
+            "referer": referer || HOST + "/",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "accept-language": "zh-CN,zh;q=0.9"
+        }
+    });
+    if (response.ok) return response.html();
+    return null;
+}
+
 function parseArticles(doc) {
     var data = [];
 
@@ -65,6 +93,24 @@ function parseArticles(doc) {
         });
     });
 
+    // Fallback: try generic book list selectors
+    if (data.length === 0) {
+        doc.select("a[href*='/book/']").forEach(function(a) {
+            var href = a.attr("href") || "";
+            if (!href.match(/\/book\/\d+/)) return;
+            var name = (a.text() || "").replace(/\s+/g, " ").trim();
+            if (!name || name.length < 2) return;
+
+            data.push({
+                name: name,
+                link: normalizeUrl(href),
+                host: HOST,
+                cover: "",
+                description: ""
+            });
+        });
+    }
+
     return data;
 }
 
@@ -102,15 +148,9 @@ function execute(url, page) {
         }
     }
 
-    var response = fetch(targetUrl, {
-        headers: {
-            "user-agent": UserAgent.android(),
-            "referer": HOST + "/"
-        }
-    });
-    if (!response.ok) return null;
+    var doc = loadDoc(targetUrl, HOST + "/");
+    if (!doc) return null;
 
-    var doc = response.html();
     var data = parseArticles(doc);
     var next = findNextPage(doc, targetUrl);
 

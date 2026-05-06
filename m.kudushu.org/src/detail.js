@@ -39,16 +39,31 @@ function execute(url) {
     if (!bookId) return null;
 
     var detailUrl = HOST + "/book/" + bookId + "/";
-    var response = fetch(detailUrl, {
-        headers: {
-            "user-agent": UserAgent.android(),
-            "referer": HOST + "/"
-        }
-    });
 
-    if (!response.ok) return null;
+    // Strategy 1: Browser (bypass anti-bot)
+    var doc = null;
+    var browser = Engine.newBrowser();
+    try {
+        browser.setUserAgent(UserAgent.android());
+        doc = browser.launch(detailUrl, 15000);
+        browser.close();
+    } catch (e) {
+        Console.log("detail browser error: " + e);
+        try { browser.close(); } catch (e2) {}
+    }
 
-    var doc = response.html();
+    // Strategy 2: Fallback to fetch
+    if (!doc) {
+        var response = fetch(detailUrl, {
+            headers: {
+                "user-agent": UserAgent.android(),
+                "referer": HOST + "/"
+            }
+        });
+        if (response.ok) doc = response.html();
+    }
+
+    if (!doc) return null;
 
     var title = doc.select(".cataloginfo h3").text().trim();
     if (!title) title = doc.select("meta[property='og:title']").attr("content") || "";
