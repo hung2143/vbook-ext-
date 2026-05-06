@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "name": "Kudushu",
+    "author": "Hung",
+    "version": 1,
+    "source": "https://m.kudushu.org/",
+    "icon": "icon.png",
+    "regexp": "(?:m\\.)?kudushu\\.org/(?:book/\\d+/?|html/\\d+/\\d+(?:_\\d+)?/?|html/\\d+/asc-\\d+/?)(?:\\?.*)?$",
+    "description": "Doc truyen tren trang m.kudushu.org",
+    "locale": "zh_CN",
+    "language": "javascript",
+    "type": "chinese_novel"
+  },
+  "script": {
+    "home": "home.js",
+    "genre": "genre.js",
+    "book": "book.js",
+    "detail": "detail.js",
+    "search": "search.js",
+    "toc": "toc.js",
+    "chap": "chap.js"
+  },
+  "config": {
+    "thread_num": 1,
+    "delay": 15000
+  }
+}

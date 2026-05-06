@@ -48,6 +48,17 @@
       "description": "Doc truyen tren trang 1QXS",
       "type": "chinese_novel",
       "locale": "zh_CN"
+    },
+    {
+      "name": "Kudushu",
+      "author": "Hung",
+      "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/m.kudushu.org/plugin.zip",
+      "version": 1,
+      "source": "https://m.kudushu.org/",
+      "icon": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/m.kudushu.org/icon.png",
+      "description": "Doc truyen tren trang m.kudushu.org",
+      "type": "chinese_novel",
+      "locale": "zh_CN"
     }
   ]
 }
