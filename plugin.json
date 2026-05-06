@@ -59,6 +59,17 @@
       "description": "Doc truyen tren trang m.kudushu.org",
       "type": "chinese_novel",
       "locale": "zh_CN"
+    },
+    {
+      "name": "Douyinxs",
+      "author": "Hung",
+      "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/douyinxs/plugin.zip",
+      "version": 2,
+      "source": "https://m.douyinxs.com/",
+      "icon": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/douyinxs/icon.png",
+      "description": "Doc truyen tren trang douyinxs (Dou Yin Xiao Shuo)",
+      "type": "chinese_novel",
+      "locale": "zh_CN"
     }
   ]
 }

@@ -1,0 +1,1 @@
+function execute() {    return Response.success([        {title: "全部分类", input: "/fenlei/", script: "gen.js"},    ]);}
