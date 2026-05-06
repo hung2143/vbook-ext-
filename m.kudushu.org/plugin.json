@@ -2,7 +2,7 @@
   "metadata": {
     "name": "Kudushu",
     "author": "Hung",
-    "version": 2,
+    "version": 3,
     "source": "https://m.kudushu.org/",
     "icon": "icon.png",
     "regexp": "(?:m\\.)?kudushu\\.org/(?:book/\\d+/?|html/\\d+/\\d+(?:_\\d+)?/?|html/\\d+/asc-\\d+/?)(?:\\?.*)?$",
