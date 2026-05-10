@@ -50,6 +50,30 @@ function fetchWithRetry(url) {
     return null;
 }
 
+function cleanContent(html) {
+    html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
+    html = html.replace(/<style[\s\S]*?<\/style>/gi, "");
+    html = html.replace(/<noscript[\s\S]*?<\/noscript>/gi, "");
+    html = html.replace(/<iframe[\s\S]*?<\/iframe>/gi, "");
+    html = html.replace(/<ins[\s\S]*?<\/ins>/gi, "");
+    html = html.replace(/<div[^>]*class="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "");
+    html = html.replace(/<div[^>]*id="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "");
+    html = html.replace(/<div[^>]*class="[^"]*google[^-][^"]*"[\s\S]*?<\/div>/gi, "");
+    html = html.replace(/<div[^>]*id="aswift_\d+"[\s\S]*?<\/div>/gi, "");
+    html = html.replace(/<div[^>]*class="[^"]*ADVERTISEMENT[^"]*"[\s\S]*?<\/div>/gi, "");
+    html = html.replace(/<a[^>]*>[\s]*<img[^>]*>[\s]*<\/a>/gi, "");
+    html = html.replace(/<img[^>]*>/gi, "");
+    html = html.replace(/<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>/gi, "");
+    html = html.replace(/<form[\s\S]*?<\/form>/gi, "");
+    
+    html = html.replace(/sto55\.com/g, "");
+    html = html.replace(/思兔阅读/g, "");
+    html = html.replace(/思兔閱讀/g, "");
+    html = html.replace(/Copyright ©[\s\S]*$/gm, "");
+    
+    return html;
+}
+
 function execute(url) {
     url = url.replace(/https?:\/\/(www\.)?sto55\.com/, HOST);
 
@@ -161,9 +185,7 @@ function execute(url) {
     }
 
     if (fullContent && fullContent.length > 50) {
-        fullContent = fullContent.replace(/sto55\.com/g, "");
-        fullContent = fullContent.replace(/思兔阅读/g, "");
-        fullContent = fullContent.replace(/思兔閱讀/g, "");
+        fullContent = cleanContent(fullContent);
         Console.log("chap: final content length=" + fullContent.length);
         return Response.success(fullContent);
     }
