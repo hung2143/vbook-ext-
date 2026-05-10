@@ -51,7 +51,7 @@ function fetchWithRetry(url) {
 }
 
 function extractContent(doc) {
-    var text = "";
+    var html = "";
 
     var selectors = [
         ".readcotent",
@@ -73,22 +73,61 @@ function extractContent(doc) {
     for (var i = 0; i < selectors.length; i++) {
         var node = doc.select(selectors[i]).first();
         if (node) {
-            var rawText = node.text() || "";
-            var html = node.html() || "";
-            Console.log("extractContent: selector '" + selectors[i] + "' matched, text length=" + rawText.length);
-            if (rawText.length > 100) {
-                text = rawText;
+            var nodeHtml = node.html() || "";
+            var nodeText = node.text() || "";
+            Console.log("extractContent: selector '" + selectors[i] + "' matched, text length=" + nodeText.length);
+            if (nodeText.length > 100) {
+                html = nodeHtml;
                 break;
             }
         }
     }
 
-    if (!text) {
+    if (!html) {
         Console.log("extractContent: no content found, using full body");
-        text = doc.body().text() || "";
+        html = doc.body().html() || "";
     }
 
-    var originalLen = text.length;
+    var originalLen = html.length;
+
+    html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
+    html = html.replace(/<style[\s\S]*?<\/style>/gi, "");
+    html = html.replace(/<form[\s\S]*?<\/form>/gi, "");
+
+    html = html.replace(/<div[^>]*class="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "\n\n");
+    html = html.replace(/<div[^>]*id="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "\n\n");
+    html = html.replace(/<a[^>]*>[\s]*<img[^>]*>[\s]*<\/a>/gi, "");
+    html = html.replace(/<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>/gi, "");
+    html = html.replace(/<img[^>]*>/gi, "");
+
+    html = html.replace(/<ins[\s\S]*?class="adsbygoogle"[\s\S]*?<\/ins>/gi, "\n\n");
+    html = html.replace(/<div[^>]*class="[^"]*google[^-][^"]*"[\s\S]*?<\/div>/gi, "\n\n");
+    html = html.replace(/<div[^>]*id="aswift_\d+"[\s\S]*?<\/div>/gi, "\n\n");
+
+    html = html.replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, "$1");
+
+    html = html
+        .replace(/<br\s*\/?>\s*<br\s*\/?>\s*<br\s*\/?>/gi, "\n\n")
+        .replace(/<br\s*\/?>\s*<br\s*\/?>/gi, "\n\n")
+        .replace(/<br\s*\/?>/gi, "\n");
+
+    html = html
+        .replace(/<p[^>]*>/gi, "")
+        .replace(/<\/p>/gi, "\n")
+        .replace(/<div[^>]*>/gi, "\n")
+        .replace(/<\/div>/gi, "\n")
+        .replace(/<li[^>]*>/gi, "- ")
+        .replace(/<\/li>/gi, "\n")
+        .replace(/<\/h[1-6]>/gi, "\n")
+        .replace(/<\/tr>/gi, "\n")
+        .replace(/<\/table>/gi, "\n")
+        .replace(/<\/tbody>/gi, "\n")
+        .replace(/<\/thead>/gi, "\n")
+        .replace(/<\/ul>/gi, "\n")
+        .replace(/<\/ol>/gi, "\n")
+        .replace(/<[^>]+>/g, "");
+
+    var text = html;
 
     text = text
         .replace(/&nbsp;/g, " ")
@@ -114,7 +153,6 @@ function extractContent(doc) {
         .replace(/&#x[0-9a-fA-F]+;/g, "");
 
     text = text
-        .replace(/\u3000{2,}/g, "\n\n")
         .replace(/\u3000/g, "　")
         .replace(/　{2,}/g, "　")
         .replace(/sto55\.com/g, "")
@@ -141,7 +179,8 @@ function extractContent(doc) {
         /ADVERTISEMENT/gi,
         /深入瞭解[^\n]*/,
         /圖書與文學[^\n]*/,
-        /^[解書籍本\n\r]+$/gm
+        /^[書籍本圖文解熟\n\r]+$/gm,
+        /^[\n\r\s　]*$/gm
     ];
     for (var ni = 0; ni < noisePatterns.length; ni++) {
         text = text.replace(noisePatterns[ni], "");
