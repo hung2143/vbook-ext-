@@ -2,7 +2,7 @@
   "metadata": {
     "name": "思兔阅读 (sto55)",
     "author": "Hung",
-    "version": 7,
+    "version": 8,
     "source": "https://sto55.com/",
     "icon": "icon.png",
     "regexp": "https?://(www\\.)?sto55\\.com/book/\\d+(?:/\\d+(?:/\\d+)?)?/?(?:\\?.*)?$",
