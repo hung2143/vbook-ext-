@@ -60,7 +60,13 @@ function extractContent(doc) {
         ".read-content",
         "[class*='content']",
         "article",
-        "main"
+        "main",
+        ".chapter",
+        ".read",
+        ".book-content",
+        ".article-content",
+        "#chapter-content",
+        ".xs_content"
     ];
 
     for (var i = 0; i < selectors.length; i++) {
@@ -68,6 +74,7 @@ function extractContent(doc) {
         if (node) {
             var html = node.html() || "";
             var text = node.text() || "";
+            Console.log("extractContent: selector '" + selectors[i] + "' matched, text length=" + text.length);
             if (text.length > 100) {
                 content = html;
                 break;
@@ -78,7 +85,7 @@ function extractContent(doc) {
     if (!content) {
         var bodyHtml = doc.body().html() || "";
         var bodyText = doc.body().text() || "";
-        var startMarkers = ["content", "chapter", "read"];
+        var startMarkers = ["content", "chapter", "read", "正文"];
         for (var j = 0; j < startMarkers.length; j++) {
             var idx = bodyText.indexOf(startMarkers[j]);
             if (idx !== -1 && idx < bodyText.length - 200) {
@@ -92,9 +99,11 @@ function extractContent(doc) {
     }
 
     if (!content) {
+        Console.log("extractContent: no content found, using full body");
         content = doc.body().html() || "";
     }
 
+    var originalLen = content.length;
     content = content.replace(/<script[\s\S]*?<\/script>/gi, "");
     content = content.replace(/<style[\s\S]*?<\/style>/gi, "");
     content = content.replace(/<form[\s\S]*?<\/form>/gi, "");
@@ -102,6 +111,8 @@ function extractContent(doc) {
     content = content.replace(/思兔阅读/gi, "");
     content = content.replace(/思兔閱讀/gi, "");
     content = content.replace(/\u00a0/g, " ");
+
+    Console.log("extractContent: content length " + originalLen + " -> " + content.length + " after cleanup");
 
     return content;
 }
@@ -114,6 +125,8 @@ function execute(url) {
     if (!baseChapPathMatch) return null;
     var baseChapPath = baseChapPathMatch[1];
 
+    Console.log("chap: fetching url=" + url);
+
     var fullContent = "";
     var browser = Engine.newBrowser();
     try {
@@ -122,10 +135,19 @@ function execute(url) {
 
         if (doc) {
             var bodyText = doc.text() || "";
+            Console.log("chap: browser got " + bodyText.length + " chars");
+            Console.log("chap: page preview (first 300): " + bodyText.substring(0, 300));
             if (bodyText.indexOf("访问太频繁") !== -1) {
+                Console.log("chap: detected rate limit, waiting 30s...");
                 sleep(30000);
                 doc = browser.launch(url, 20000);
+                if (doc) {
+                    bodyText = doc.text() || "";
+                    Console.log("chap: after wait got " + bodyText.length + " chars");
+                }
             }
+        } else {
+            Console.log("chap: browser returned null doc");
         }
 
         if (doc) {
@@ -141,6 +163,7 @@ function execute(url) {
                     }
                 }
             });
+            Console.log("chap: found nextLink=" + nextLink);
 
             var pageCount = 0;
             var maxPages = 20;
@@ -156,6 +179,7 @@ function execute(url) {
                 try {
                     nextDoc = browser.launch(nextUrl, 20000);
                 } catch(e) {
+                    Console.log("chap: next page error: " + e);
                     break;
                 }
 
@@ -177,6 +201,7 @@ function execute(url) {
                     }
                 });
             }
+            Console.log("chap: fetched " + pageCount + " extra pages, total content length=" + fullContent.length);
         }
 
         browser.close();
@@ -186,11 +211,15 @@ function execute(url) {
     }
 
     if (!fullContent || fullContent.length < 100) {
+        Console.log("chap: browser content too short, trying fetchWithRetry...");
         var doc2 = fetchWithRetry(url);
         if (doc2) {
             fullContent = extractContent(doc2);
+            Console.log("chap: fetchWithRetry got " + fullContent.length + " chars");
         }
     }
+
+    Console.log("chap: final content length=" + (fullContent ? fullContent.length : 0));
 
     if (fullContent && fullContent.length > 100) {
         return Response.success(fullContent);
