@@ -50,153 +50,6 @@ function fetchWithRetry(url) {
     return null;
 }
 
-function extractContent(doc) {
-    var html = "";
-
-    var selectors = [
-        ".readcotent",
-        "#content",
-        "div.content",
-        ".chapter-content",
-        ".read-content",
-        "[class*='content']",
-        "article",
-        "main",
-        ".chapter",
-        ".read",
-        ".book-content",
-        ".article-content",
-        "#chapter-content",
-        ".xs_content"
-    ];
-
-    for (var i = 0; i < selectors.length; i++) {
-        var node = doc.select(selectors[i]).first();
-        if (node) {
-            var nodeHtml = node.html() || "";
-            var nodeText = node.text() || "";
-            Console.log("extractContent: selector '" + selectors[i] + "' matched, text length=" + nodeText.length);
-            if (nodeText.length > 100) {
-                html = nodeHtml;
-                break;
-            }
-        }
-    }
-
-    if (!html) {
-        Console.log("extractContent: no content found, using full body");
-        html = doc.body().html() || "";
-    }
-
-    var originalLen = html.length;
-
-    html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
-    html = html.replace(/<style[\s\S]*?<\/style>/gi, "");
-    html = html.replace(/<form[\s\S]*?<\/form>/gi, "");
-
-    html = html.replace(/<div[^>]*class="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "\n\n");
-    html = html.replace(/<div[^>]*id="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "\n\n");
-    html = html.replace(/<a[^>]*>[\s]*<img[^>]*>[\s]*<\/a>/gi, "");
-    html = html.replace(/<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>/gi, "");
-    html = html.replace(/<img[^>]*>/gi, "");
-
-    html = html.replace(/<ins[\s\S]*?class="adsbygoogle"[\s\S]*?<\/ins>/gi, "\n\n");
-    html = html.replace(/<div[^>]*class="[^"]*google[^-][^"]*"[\s\S]*?<\/div>/gi, "\n\n");
-    html = html.replace(/<div[^>]*id="aswift_\d+"[\s\S]*?<\/div>/gi, "\n\n");
-
-    html = html.replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, "$1");
-
-    html = html
-        .replace(/<br\s*\/?>\s*<br\s*\/?>\s*<br\s*\/?>/gi, "\n\n")
-        .replace(/<br\s*\/?>\s*<br\s*\/?>/gi, "\n\n")
-        .replace(/<br\s*\/?>/gi, "\n");
-
-    html = html
-        .replace(/<p[^>]*>/gi, "")
-        .replace(/<\/p>/gi, "\n")
-        .replace(/<div[^>]*>/gi, "\n")
-        .replace(/<\/div>/gi, "\n")
-        .replace(/<li[^>]*>/gi, "- ")
-        .replace(/<\/li>/gi, "\n")
-        .replace(/<\/h[1-6]>/gi, "\n")
-        .replace(/<\/tr>/gi, "\n")
-        .replace(/<\/table>/gi, "\n")
-        .replace(/<\/tbody>/gi, "\n")
-        .replace(/<\/thead>/gi, "\n")
-        .replace(/<\/ul>/gi, "\n")
-        .replace(/<\/ol>/gi, "\n")
-        .replace(/<[^>]+>/g, "");
-
-    var text = html;
-
-    text = text
-        .replace(/&nbsp;/g, " ")
-        .replace(/&amp;/g, "&")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&#x27;/g, "'")
-        .replace(/&#x2F;/g, "/")
-        .replace(/&mdash;/g, "—")
-        .replace(/&ndash;/g, "–")
-        .replace(/&hellip;/g, "…")
-        .replace(/&middot;/g, "·")
-        .replace(/&ldquo;/g, '"')
-        .replace(/&rdquo;/g, '"')
-        .replace(/&lsquo;/g, "'")
-        .replace(/&rsquo;/g, "'")
-        .replace(/&copy;/g, "(c)")
-        .replace(/&reg;/g, "(R)")
-        .replace(/&trade;/g, "(TM)")
-        .replace(/&#[0-9]+;/g, "")
-        .replace(/&#x[0-9a-fA-F]+;/g, "");
-
-    text = text
-        .replace(/\u3000/g, "　")
-        .replace(/　{2,}/g, "　")
-        .replace(/sto55\.com/g, "")
-        .replace(/思兔阅读/g, "")
-        .replace(/思兔閱讀/g, "")
-        .replace(/Copyright ©[\s\S]*$/gm, "");
-
-    var noisePatterns = [
-        /温馨提示[：:]?[^\n]*/,
-        /按[回車Enter\r\n ]*鍵?[^\n]*/gi,
-        /返回書目[^\n]*/,
-        /返回上一頁[^\n]*/,
-        /進入下一頁[^\n]*/,
-        /加入書籤[^\n]*/,
-        /TOP↑/g,
-        /上一章[^\n]*/,
-        /下一章[^\n]*/,
-        /章節目錄[^\n]*/,
-        /目錄[^\n]*/,
-        /書籤[^\n]*/,
-        /報錯[^\n]*/,
-        /關燈[^\n]*/,
-        /字體[+-][^\n]*/,
-        /ADVERTISEMENT/gi,
-        /深入瞭解[^\n]*/,
-        /圖書與文學[^\n]*/,
-        /^[書籍本圖文解熟\n\r]+$/gm,
-        /^[\n\r\s　]*$/gm
-    ];
-    for (var ni = 0; ni < noisePatterns.length; ni++) {
-        text = text.replace(noisePatterns[ni], "");
-    }
-
-    text = text.replace(/[ \t]+\n/g, "\n");
-    text = text.replace(/[ \t]{2,}/g, " ");
-    text = text.replace(/\n{4,}/g, "\n\n\n");
-    text = text.replace(/^\n+|\n+$/g, "");
-    text = text.trim();
-
-    Console.log("extractContent: content length " + originalLen + " -> " + text.length + " after cleanup");
-
-    return text;
-}
-
 function execute(url) {
     url = url.replace(/https?:\/\/(www\.)?sto55\.com/, HOST);
 
@@ -215,22 +68,22 @@ function execute(url) {
         if (doc) {
             var bodyText = doc.text() || "";
             Console.log("chap: browser got " + bodyText.length + " chars");
-            Console.log("chap: page preview (first 300): " + bodyText.substring(0, 300));
             if (bodyText.indexOf("访问太频繁") !== -1) {
                 Console.log("chap: detected rate limit, waiting 30s...");
                 sleep(30000);
                 doc = browser.launch(url, 20000);
-                if (doc) {
-                    bodyText = doc.text() || "";
-                    Console.log("chap: after wait got " + bodyText.length + " chars");
-                }
             }
-        } else {
-            Console.log("chap: browser returned null doc");
         }
 
         if (doc) {
-            fullContent = extractContent(doc);
+            var contentEl = doc.select(".readcotent, #content, div.content, .chapter-content, .read-content, [class*='content'], article, main, .chapter, .read, .book-content, .article-content, #chapter-content, .xs_content");
+            if (contentEl.first()) {
+                fullContent = contentEl.html() || "";
+            }
+
+            if (!fullContent || fullContent.length < 50) {
+                fullContent = doc.body().html() || "";
+            }
 
             var nextLink = null;
             doc.select("a").forEach(function(a) {
@@ -264,9 +117,12 @@ function execute(url) {
 
                 if (!nextDoc) break;
 
-                var nextHtml = extractContent(nextDoc);
-                if (nextHtml.length > 50) {
-                    fullContent += "\n" + nextHtml;
+                var nextEl = nextDoc.select(".readcotent, #content, div.content, .chapter-content, .read-content, [class*='content'], article, main, .chapter, .read, .book-content, .article-content, #chapter-content, .xs_content");
+                if (nextEl.first()) {
+                    var nextHtml = nextEl.html() || "";
+                    if (nextHtml.length > 50) {
+                        fullContent += nextHtml;
+                    }
                 }
 
                 nextLink = null;
@@ -289,18 +145,26 @@ function execute(url) {
         try { browser.close(); } catch(e2) {}
     }
 
-    if (!fullContent || fullContent.length < 100) {
+    if (!fullContent || fullContent.length < 50) {
         Console.log("chap: browser content too short, trying fetchWithRetry...");
         var doc2 = fetchWithRetry(url);
         if (doc2) {
-            fullContent = extractContent(doc2);
+            var contentEl2 = doc2.select(".readcotent, #content, div.content, .chapter-content, .read-content, [class*='content'], article, main, .chapter, .read, .book-content, .article-content, #chapter-content, .xs_content");
+            if (contentEl2.first()) {
+                fullContent = contentEl2.html() || "";
+            }
+            if (!fullContent || fullContent.length < 50) {
+                fullContent = doc2.body().html() || "";
+            }
             Console.log("chap: fetchWithRetry got " + fullContent.length + " chars");
         }
     }
 
-    Console.log("chap: final content length=" + (fullContent ? fullContent.length : 0));
-
-    if (fullContent && fullContent.length > 100) {
+    if (fullContent && fullContent.length > 50) {
+        fullContent = fullContent.replace(/sto55\.com/g, "");
+        fullContent = fullContent.replace(/思兔阅读/g, "");
+        fullContent = fullContent.replace(/思兔閱讀/g, "");
+        Console.log("chap: final content length=" + fullContent.length);
         return Response.success(fullContent);
     }
 
