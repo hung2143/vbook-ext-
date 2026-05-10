@@ -54,6 +54,7 @@ function extractContent(doc) {
     var content = "";
 
     var selectors = [
+        ".readcotent",
         "#content",
         "div.content",
         ".chapter-content",
@@ -85,7 +86,7 @@ function extractContent(doc) {
     if (!content) {
         var bodyHtml = doc.body().html() || "";
         var bodyText = doc.body().text() || "";
-        var startMarkers = ["content", "chapter", "read", "正文"];
+        var startMarkers = ["content", "chapter", "read", "正文", "readcotent"];
         for (var j = 0; j < startMarkers.length; j++) {
             var idx = bodyText.indexOf(startMarkers[j]);
             if (idx !== -1 && idx < bodyText.length - 200) {
@@ -108,25 +109,41 @@ function extractContent(doc) {
     content = content.replace(/<script[\s\S]*?<\/script>/gi, "");
     content = content.replace(/<style[\s\S]*?<\/style>/gi, "");
     content = content.replace(/<form[\s\S]*?<\/form>/gi, "");
-    content = content.replace(/<div[^>]*class="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "");
-    content = content.replace(/<div[^>]*id="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "");
+
+    content = content.replace(/<div[^>]*class="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "\n");
+    content = content.replace(/<div[^>]*id="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "\n");
     content = content.replace(/<a[^>]*>[\s]*<img[^>]*>[\s]*<\/a>/gi, "");
     content = content.replace(/<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>/gi, "");
-    content = content.replace(/<[^>]*(?:ad|ads|advertisement|ADVERTISEMENT)[^>]*>[\s\S]*?<\/[^>]+>/gi, "");
     content = content.replace(/<img[^>]*>/gi, "");
+
+    var googleAdPatterns = [
+        /<ins[\s\S]*?class="adsbygoogle"[\s\S]*?<\/ins>/gi,
+        /<div[^>]*class="[^"]*google[^-][^"]*"[\s\S]*?<\/div>/gi,
+        /<div[^>]*id="aswift_\d+"[\s\S]*?<\/div>/gi
+    ];
+    for (var gi = 0; gi < googleAdPatterns.length; gi++) {
+        content = content.replace(googleAdPatterns[gi], "\n");
+    }
+
     content = content.replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, "$1");
 
-    var text = content
-        .replace(/<br\s*\/?>/gi, "\n")
-        .replace(/<\/p>/gi, "\n")
-        .replace(/<\/div>/gi, "\n")
-        .replace(/<\/h[1-6]>/gi, "\n")
-        .replace(/<\/li>/gi, "\n")
-        .replace(/<\/tr>/gi, "\n")
+    content = content
+        .replace(/<br\s*\/?>\s*<br\s*\/?>/gi, "\n\n")
+        .replace(/<br\s*\/?>/gi, "\n");
+
+    content = content
         .replace(/<p[^>]*>/gi, "")
+        .replace(/<\/p>/gi, "\n")
         .replace(/<div[^>]*>/gi, "")
+        .replace(/<\/div>/gi, "\n")
         .replace(/<li[^>]*>/gi, "- ")
-        .replace(/<[^>]+>/g, "")
+        .replace(/<\/li>/gi, "\n")
+        .replace(/<\/h[1-6]>/gi, "\n")
+        .replace(/<\/tr>/gi, "\n")
+        .replace(/<\/table>/gi, "\n")
+        .replace(/<[^>]+>/g, "");
+
+    content = content
         .replace(/&nbsp;/g, " ")
         .replace(/&amp;/g, "&")
         .replace(/&lt;/g, "<")
@@ -136,32 +153,55 @@ function extractContent(doc) {
         .replace(/&mdash;/g, "—")
         .replace(/&ndash;/g, "–")
         .replace(/&hellip;/g, "…")
-        .replace(/&middot;/g, "·")
+        .replace(/&middot;/g, "·");
+
+    content = content
+        .replace(/\u3000{2,}/g, "\n\n")
+        .replace(/\u3000/g, "　")
+        .replace(/　{2,}/g, "　")
         .replace(/sto55\.com/g, "")
         .replace(/思兔阅读/g, "")
-        .replace(/思兔閱讀/g, "")
-        .replace(/Copyright ©[\s\S]*?sto55\.com/g, "")
-        .replace(/温馨提示[：:]?[^\n]*回车[^\n]*/g, "")
-        .replace(/按[^\n]*返回書目[^\n]*/g, "")
-        .replace(/按[^\n]*返回上一頁[^\n]*/g, "")
-        .replace(/按[^\n]*進入下一頁[^\n]*/g, "")
-        .replace(/按[^\n]*鍵[^\n]*/g, "")
-        .replace(/TOP↑/g, "")
-        .replace(/\n{3,}/g, "\n\n")
-        .replace(/^\n+|\n+$/g, "")
-        .replace(/[ \t]+\n/g, "\n")
-        .replace(/[ \t]{2,}/g, " ");
+        .replace(/思兔閱讀/g, "");
 
-    text = text.trim();
+    var footerPatterns = [
+        /Copyright ©[\s\S]*?sto55\.com/,
+        /温馨提示[：:]?[^\n]*/,
+        /按 ?回车[^\n]*/,
+        /按 ?←[^\n]*/,
+        /按 ?→[^\n]*/,
+        /按 ?鍵[^\n]*/,
+        /返回書目[^\n]*/,
+        /返回上一頁[^\n]*/,
+        /進入下一頁[^\n]*/,
+        /加入書籤[^\n]*/,
+        /TOP↑/g,
+        /上一章[^\n]*/,
+        /下一章[^\n]*/,
+        /章節目錄[^\n]*/,
+        /關燈[^\n]*/,
+        /字體[+-][^\n]*/,
+        /目錄[^\n]*/,
+        /書籤[^\n]*/,
+        /報錯[^\n]*/,
+        /^[\s　]*$/gm
+    ];
+    for (var fi = 0; fi < footerPatterns.length; fi++) {
+        content = content.replace(footerPatterns[fi], "");
+    }
 
-    Console.log("extractContent: content length " + originalLen + " -> " + text.length + " after cleanup");
+    content = content.replace(/[ \t]+\n/g, "\n");
+    content = content.replace(/[ \t]{2,}/g, " ");
+    content = content.replace(/\n{4,}/g, "\n\n\n");
+    content = content.replace(/^\n+|\n+$/g, "");
+    content = content.trim();
 
-    return text;
+    Console.log("extractContent: content length " + originalLen + " -> " + content.length + " after cleanup");
+
+    return content;
 }
 
 function execute(url) {
     url = url.replace(/https?:\/\/(www\.)?sto55\.com/, HOST);
-    if (!url.endsWith("/")) url = url + "/";
 
     var baseChapPathMatch = url.match(/(\/book\/\d+\/\d+)/);
     if (!baseChapPathMatch) return null;
