@@ -51,7 +51,7 @@ function fetchWithRetry(url) {
 }
 
 function extractContent(doc) {
-    var content = "";
+    var text = "";
 
     var selectors = [
         ".readcotent",
@@ -73,103 +73,58 @@ function extractContent(doc) {
     for (var i = 0; i < selectors.length; i++) {
         var node = doc.select(selectors[i]).first();
         if (node) {
+            var rawText = node.text() || "";
             var html = node.html() || "";
-            var text = node.text() || "";
-            Console.log("extractContent: selector '" + selectors[i] + "' matched, text length=" + text.length);
-            if (text.length > 100) {
-                content = html;
+            Console.log("extractContent: selector '" + selectors[i] + "' matched, text length=" + rawText.length);
+            if (rawText.length > 100) {
+                text = rawText;
                 break;
             }
         }
     }
 
-    if (!content) {
-        var bodyHtml = doc.body().html() || "";
-        var bodyText = doc.body().text() || "";
-        var startMarkers = ["content", "chapter", "read", "正文", "readcotent"];
-        for (var j = 0; j < startMarkers.length; j++) {
-            var idx = bodyText.indexOf(startMarkers[j]);
-            if (idx !== -1 && idx < bodyText.length - 200) {
-                var potentialContent = bodyHtml.substring(Math.max(0, idx - 100), idx + 50000);
-                if (potentialContent.length > 200) {
-                    content = potentialContent;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (!content) {
+    if (!text) {
         Console.log("extractContent: no content found, using full body");
-        content = doc.body().html() || "";
+        text = doc.body().text() || "";
     }
 
-    var originalLen = content.length;
+    var originalLen = text.length;
 
-    content = content.replace(/<script[\s\S]*?<\/script>/gi, "");
-    content = content.replace(/<style[\s\S]*?<\/style>/gi, "");
-    content = content.replace(/<form[\s\S]*?<\/form>/gi, "");
-
-    content = content.replace(/<div[^>]*class="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "\n");
-    content = content.replace(/<div[^>]*id="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "\n");
-    content = content.replace(/<a[^>]*>[\s]*<img[^>]*>[\s]*<\/a>/gi, "");
-    content = content.replace(/<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>/gi, "");
-    content = content.replace(/<img[^>]*>/gi, "");
-
-    var googleAdPatterns = [
-        /<ins[\s\S]*?class="adsbygoogle"[\s\S]*?<\/ins>/gi,
-        /<div[^>]*class="[^"]*google[^-][^"]*"[\s\S]*?<\/div>/gi,
-        /<div[^>]*id="aswift_\d+"[\s\S]*?<\/div>/gi
-    ];
-    for (var gi = 0; gi < googleAdPatterns.length; gi++) {
-        content = content.replace(googleAdPatterns[gi], "\n");
-    }
-
-    content = content.replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, "$1");
-
-    content = content
-        .replace(/<br\s*\/?>\s*<br\s*\/?>/gi, "\n\n")
-        .replace(/<br\s*\/?>/gi, "\n");
-
-    content = content
-        .replace(/<p[^>]*>/gi, "")
-        .replace(/<\/p>/gi, "\n")
-        .replace(/<div[^>]*>/gi, "")
-        .replace(/<\/div>/gi, "\n")
-        .replace(/<li[^>]*>/gi, "- ")
-        .replace(/<\/li>/gi, "\n")
-        .replace(/<\/h[1-6]>/gi, "\n")
-        .replace(/<\/tr>/gi, "\n")
-        .replace(/<\/table>/gi, "\n")
-        .replace(/<[^>]+>/g, "");
-
-    content = content
+    text = text
         .replace(/&nbsp;/g, " ")
         .replace(/&amp;/g, "&")
         .replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">")
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'")
+        .replace(/&#x27;/g, "'")
+        .replace(/&#x2F;/g, "/")
         .replace(/&mdash;/g, "—")
         .replace(/&ndash;/g, "–")
         .replace(/&hellip;/g, "…")
-        .replace(/&middot;/g, "·");
+        .replace(/&middot;/g, "·")
+        .replace(/&ldquo;/g, '"')
+        .replace(/&rdquo;/g, '"')
+        .replace(/&lsquo;/g, "'")
+        .replace(/&rsquo;/g, "'")
+        .replace(/&copy;/g, "(c)")
+        .replace(/&reg;/g, "(R)")
+        .replace(/&trade;/g, "(TM)")
+        .replace(/&#[0-9]+;/g, "")
+        .replace(/&#x[0-9a-fA-F]+;/g, "");
 
-    content = content
+    text = text
         .replace(/\u3000{2,}/g, "\n\n")
         .replace(/\u3000/g, "　")
         .replace(/　{2,}/g, "　")
         .replace(/sto55\.com/g, "")
         .replace(/思兔阅读/g, "")
-        .replace(/思兔閱讀/g, "");
+        .replace(/思兔閱讀/g, "")
+        .replace(/Copyright ©[\s\S]*$/gm, "");
 
-    var footerPatterns = [
-        /Copyright ©[\s\S]*?sto55\.com/,
+    var noisePatterns = [
         /温馨提示[：:]?[^\n]*/,
-        /按 ?回车[^\n]*/,
-        /按 ?←[^\n]*/,
-        /按 ?→[^\n]*/,
-        /按 ?鍵[^\n]*/,
+        /按[回車Enter\r\n ]*鍵?[^\n]*/gi,
         /返回書目[^\n]*/,
         /返回上一頁[^\n]*/,
         /進入下一頁[^\n]*/,
@@ -178,26 +133,29 @@ function extractContent(doc) {
         /上一章[^\n]*/,
         /下一章[^\n]*/,
         /章節目錄[^\n]*/,
-        /關燈[^\n]*/,
-        /字體[+-][^\n]*/,
         /目錄[^\n]*/,
         /書籤[^\n]*/,
         /報錯[^\n]*/,
-        /^[\s　]*$/gm
+        /關燈[^\n]*/,
+        /字體[+-][^\n]*/,
+        /ADVERTISEMENT/gi,
+        /深入瞭解[^\n]*/,
+        /圖書與文學[^\n]*/,
+        /^[解書籍本\n\r]+$/gm
     ];
-    for (var fi = 0; fi < footerPatterns.length; fi++) {
-        content = content.replace(footerPatterns[fi], "");
+    for (var ni = 0; ni < noisePatterns.length; ni++) {
+        text = text.replace(noisePatterns[ni], "");
     }
 
-    content = content.replace(/[ \t]+\n/g, "\n");
-    content = content.replace(/[ \t]{2,}/g, " ");
-    content = content.replace(/\n{4,}/g, "\n\n\n");
-    content = content.replace(/^\n+|\n+$/g, "");
-    content = content.trim();
+    text = text.replace(/[ \t]+\n/g, "\n");
+    text = text.replace(/[ \t]{2,}/g, " ");
+    text = text.replace(/\n{4,}/g, "\n\n\n");
+    text = text.replace(/^\n+|\n+$/g, "");
+    text = text.trim();
 
-    Console.log("extractContent: content length " + originalLen + " -> " + content.length + " after cleanup");
+    Console.log("extractContent: content length " + originalLen + " -> " + text.length + " after cleanup");
 
-    return content;
+    return text;
 }
 
 function execute(url) {
