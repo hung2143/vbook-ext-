@@ -70,6 +70,17 @@
       "description": "Doc truyen tren trang douyinxs (Dou Yin Xiao Shuo)",
       "type": "chinese_novel",
       "locale": "zh_CN"
+    },
+    {
+      "name": "思兔阅读 (sto55)",
+      "author": "Hung",
+      "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/sto55.com/plugin.zip",
+      "version": 1,
+      "source": "https://sto55.com/",
+      "icon": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/sto55.com/icon.png",
+      "description": "Đọc truyện trên trang https://sto55.com/ - 思兔閱讀",
+      "type": "chinese_novel",
+      "locale": "zh_CN"
     }
   ]
 }

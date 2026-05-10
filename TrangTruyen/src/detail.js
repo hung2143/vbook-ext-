@@ -25,6 +25,8 @@ function fetchStoryBySlug(slug) {
         headers: {
             "user-agent": UserAgent.chrome(),
             "referer": "https://trangtruyen.site/"
+
+
         }
     });
     if (!apiResponse.ok) return null;
