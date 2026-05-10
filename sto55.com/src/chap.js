@@ -104,17 +104,59 @@ function extractContent(doc) {
     }
 
     var originalLen = content.length;
+
     content = content.replace(/<script[\s\S]*?<\/script>/gi, "");
     content = content.replace(/<style[\s\S]*?<\/style>/gi, "");
     content = content.replace(/<form[\s\S]*?<\/form>/gi, "");
-    content = content.replace(/sto55\.com/gi, "");
-    content = content.replace(/思兔阅读/gi, "");
-    content = content.replace(/思兔閱讀/gi, "");
-    content = content.replace(/\u00a0/g, " ");
+    content = content.replace(/<div[^>]*class="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "");
+    content = content.replace(/<div[^>]*id="[^"]*ad[^\/]*"[\s\S]*?<\/div>/gi, "");
+    content = content.replace(/<a[^>]*>[\s]*<img[^>]*>[\s]*<\/a>/gi, "");
+    content = content.replace(/<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>/gi, "");
+    content = content.replace(/<[^>]*(?:ad|ads|advertisement|ADVERTISEMENT)[^>]*>[\s\S]*?<\/[^>]+>/gi, "");
+    content = content.replace(/<img[^>]*>/gi, "");
+    content = content.replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, "$1");
 
-    Console.log("extractContent: content length " + originalLen + " -> " + content.length + " after cleanup");
+    var text = content
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<\/p>/gi, "\n")
+        .replace(/<\/div>/gi, "\n")
+        .replace(/<\/h[1-6]>/gi, "\n")
+        .replace(/<\/li>/gi, "\n")
+        .replace(/<\/tr>/gi, "\n")
+        .replace(/<p[^>]*>/gi, "")
+        .replace(/<div[^>]*>/gi, "")
+        .replace(/<li[^>]*>/gi, "- ")
+        .replace(/<[^>]+>/g, "")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&mdash;/g, "—")
+        .replace(/&ndash;/g, "–")
+        .replace(/&hellip;/g, "…")
+        .replace(/&middot;/g, "·")
+        .replace(/sto55\.com/g, "")
+        .replace(/思兔阅读/g, "")
+        .replace(/思兔閱讀/g, "")
+        .replace(/Copyright ©[\s\S]*?sto55\.com/g, "")
+        .replace(/温馨提示[：:]?[^\n]*回车[^\n]*/g, "")
+        .replace(/按[^\n]*返回書目[^\n]*/g, "")
+        .replace(/按[^\n]*返回上一頁[^\n]*/g, "")
+        .replace(/按[^\n]*進入下一頁[^\n]*/g, "")
+        .replace(/按[^\n]*鍵[^\n]*/g, "")
+        .replace(/TOP↑/g, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .replace(/^\n+|\n+$/g, "")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/[ \t]{2,}/g, " ");
 
-    return content;
+    text = text.trim();
+
+    Console.log("extractContent: content length " + originalLen + " -> " + text.length + " after cleanup");
+
+    return text;
 }
 
 function execute(url) {
