@@ -48,11 +48,35 @@ function cleanContent(html) {
     // Xóa link ảnh
     html = html.replace(/<a[^>]*>[\s]*<img[^>]*>[\s]*<\/a>/gi, "");
 
-    // Xóa heading và watermark
+    // Xóa heading
     html = html.replace(/<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>/gi, "");
-    html = html.replace(/sto55\.com/g, "");
-    html = html.replace(/思兔阅读/g, "");
-    html = html.replace(/思兔閱讀/g, "");
+
+    // === Lọc watermark / quảng cáo tiếng Trung của sto55.com ===
+    // Các câu này được chèn vào nội dung chương dưới dạng <p> hoặc text thuần
+
+    // Domain & tên trang
+    html = html.replace(/sto55\.com/gi, "");
+    html = html.replace(/思兔[阅閱]读/g, "");       // "思兔阅读" / "思兔閱讀"
+    html = html.replace(/思兔/g, "");               // chỉ "思兔" đứng một mình
+
+    // "本章节来源于xxx" / "本章節來源於xxx" (Bản chương tiết bắt nguồn từ...)
+    html = html.replace(/本章[节節][来來][源自於于][^\n<]{0,30}/g, "");
+
+    // "想看更多精彩章节，请访问xxx" (Muốn nhìn nhiều đặc sắc hơn chương tiết, hãy ghé thăm...)
+    html = html.replace(/想[看閱][更多]*精彩章[节節][，,\s]*请[访訪]问[^\n<]{0,30}/g, "");
+
+    // "思兔提醒您查看最新内容" / "提醒您关注最新章节" (nhắc nhở ngài xem xét mới nhất nội dung)
+    html = html.replace(/提醒[您你][关查][注看][^\n<]{0,30}/g, "");
+    html = html.replace(/[关關][注][最]*新[章内][节節容][^\n<]{0,20}/g, "");
+
+    // "请收藏本站" / "请记住本站" (xin hãy bookmark trang này)
+    html = html.replace(/请[收记][藏住][本][站网][^\n<]{0,20}/g, "");
+
+    // Xóa các thẻ <p> chỉ chứa domain / ký tự lẻ sau khi filter
+    html = html.replace(/<p[^>]*>\s*<\/p>/gi, "");
+    html = html.replace(/<p[^>]*>[\s\u3000\u00a0]*<\/p>/gi, "");
+
+    // Copyright footer
     html = html.replace(/Copyright ©[\s\S]*$/gm, "");
 
     return html;
