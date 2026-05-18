@@ -49,12 +49,19 @@ function execute(key, page) {
     // Dùng format URL đúng: /search/{key}/{page}.html
     var searchUrl = HOST + "/search/" + encodeURIComponent(key) + "/" + pageNum + ".html";
 
-    var doc = fetchWithRetry(searchUrl);
+    Console.log("Search URL: " + searchUrl);
+
+    // Dùng browserFetch trước vì trang tìm kiếm bật JS chống bot
+    var doc = browserFetch(searchUrl, 25000);
     if (!doc) {
-        doc = browserFetch(searchUrl);
+        Console.log("browserFetch failed, trying fetchWithRetry...");
+        doc = fetchWithRetry(searchUrl);
     }
 
     if (!doc) return Response.success([], null);
+
+    var allBoxes = doc.select(".bookbox");
+    Console.log("Found .bookbox elements: " + allBoxes.size());
 
     var data = [];
     var seen = {};
@@ -118,5 +125,7 @@ function execute(key, page) {
         next = String(pageNum + 1);
     }
 
+    Console.log("Total search results parsed: " + data.length);
     return Response.success(data, next);
+
 }
