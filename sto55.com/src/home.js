@@ -2,11 +2,11 @@ var HOST = "https://sto55.com";
 
 function execute() {
     return Response.success([
-        { title: "男生频道", input: HOST + "/list_1_1.html", script: "book.js" },
-        { title: "女生频道", input: HOST + "/list_2_1.html", script: "book.js" },
-        { title: "最新更新", input: HOST + "/top/lastupdate_1.html", script: "latest.js" },
-        { title: "总点击榜", input: HOST + "/top/hits_1.html", script: "latest.js" },
-        { title: "总推荐榜", input: HOST + "/top/recommend_1.html", script: "latest.js" },
-        { title: "总收藏榜", input: HOST + "/top/collect_1.html", script: "latest.js" }
+        { title: "Nam sinh băng tán", input: HOST + "/class_1_1.html", script: "book.js" },
+        { title: "Nữ sinh băng tán", input: HOST + "/class_2_1.html", script: "book.js" },
+        { title: "Mới nhất đổi mới", input: HOST + "/top/lastupdate_1.html", script: "latest.js" },
+        { title: "Bảng tổng click", input: HOST + "/top/allvisit_1.html", script: "latest.js" },
+        { title: "Bảng đề xuất", input: HOST + "/top/recommend_1.html", script: "latest.js" },
+        { title: "Bảng yêu thích", input: HOST + "/top/collect_1.html", script: "latest.js" }
     ]);
 }
