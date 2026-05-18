@@ -54,6 +54,63 @@ function fetchWithRetry(url) {
     return null;
 }
 
+/**
+ * Lấy mô tả truyện từ trang tìm kiếm (vì trang chi tiết sto55 không có phần giới thiệu)
+ * Tìm theo tên sách, khớp bookId để đảm bảo lấy đúng truyện
+ */
+function fetchDescFromSearch(bookName, bookId) {
+    if (!bookName) return "";
+    try {
+        var searchUrl = HOST + "/search";
+        var body = "searchtype=all&searchkey=" + encodeURIComponent(bookName) + "&action=login&submit=";
+        var response = fetch(searchUrl, {
+            method: "POST",
+            headers: {
+                "user-agent": UserAgent.android(),
+                "referer": HOST + "/",
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "content-type": "application/x-www-form-urlencoded"
+            },
+            body: body
+        });
+        if (!response || !response.ok) return "";
+
+        var searchDoc = response.html();
+        var desc = "";
+
+        // Tìm .bookbox khớp với bookId hiện tại
+        searchDoc.select(".bookbox").forEach(function(box) {
+            if (desc) return; // Đã tìm thấy rồi
+            var linkEl = box.select(".bookname a").first();
+            if (!linkEl) return;
+            var href = linkEl.attr("href") || "";
+            if (href.indexOf("/book/" + bookId) !== -1 || href.indexOf("/book/" + bookId + "/") !== -1) {
+                var updateEl = box.select(".update").first();
+                if (updateEl) {
+                    desc = updateEl.text().trim();
+                    desc = desc.replace(/^簡介[：:]\s*/, "").replace(/^简介[：:]\s*/, "").trim();
+                }
+            }
+        });
+
+        // Nếu không tìm được theo bookId, lấy kết quả đầu tiên
+        if (!desc) {
+            var firstUpdate = searchDoc.select(".bookbox .update").first();
+            if (firstUpdate) {
+                desc = firstUpdate.text().trim();
+                desc = desc.replace(/^簡介[：:]\s*/, "").replace(/^简介[：:]\s*/, "").trim();
+            }
+        }
+
+        Console.log("fetchDescFromSearch result: " + (desc ? desc.substring(0, 50) + "..." : "EMPTY"));
+        return desc;
+    } catch (e) {
+        Console.log("fetchDescFromSearch error: " + e);
+        return "";
+    }
+}
+
 function execute(url) {
     url = url.replace(/https?:\/\/(www\.)?sto55\.com/, HOST);
     if (!url.endsWith("/")) url = url + "/";
@@ -123,14 +180,13 @@ function execute(url) {
     if (descEl) {
         desc = descEl.text().trim();
     }
-    if (!desc) {
-        var metaDesc = doc.select("meta[name='description']").attr("content");
-        if (metaDesc) desc = metaDesc.trim();
+    // meta description của sto55 chỉ là text SEO chung, không dùng được
+    // Lấy mô tả đầy đủ từ trang tìm kiếm (nơi duy nhất có giới thiệu truyện)
+    if (!desc && name) {
+        Console.log("No desc in detail page, fetching from search...");
+        desc = fetchDescFromSearch(name, bookId);
     }
-    if (!desc) {
-        var metaOgDesc = doc.select("meta[property='og:description']").attr("content");
-        if (metaOgDesc) desc = metaOgDesc.trim();
-    }
+
 
     var statusMatch = bodyText.match(/(连载|完结|完結|连载中|完本)/);
     var ongoing = !statusMatch || (statusMatch[0] !== "完结" && statusMatch[0] !== "完本" && statusMatch[0] !== "完結");

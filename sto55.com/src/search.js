@@ -15,60 +15,85 @@ function browserFetch(url, timeout) {
     }
 }
 
-function fetchWithRetry(url) {
-    for (var i = 0; i < 3; i++) {
-        try {
-            var response = fetch(url, {
-                headers: {
-                    "user-agent": UserAgent.android(),
-                    "referer": HOST + "/",
-                    "accept-language": "zh-CN,zh;q=0.9"
-                }
-            });
-            if (response && response.ok) {
-                var doc = response.html();
-                var bodyText = doc.text() || "";
-                if (bodyText.indexOf("访问太频繁") !== -1) {
-                    sleep(30000);
-                    continue;
-                }
-                return doc;
-            }
-        } catch (e) {
-            Console.log("Fetch error: " + e);
-            sleep(3000);
+/**
+ * Gửi POST request tới /search với đúng form data của sto55.com
+ */
+function doSearchPost(key, pageNum) {
+    var searchUrl = HOST + "/search";
+    var body = "searchtype=all&searchkey=" + encodeURIComponent(key) + "&action=login&submit=";
+    if (pageNum > 1) {
+        body += "&page=" + pageNum;
+    }
+
+    try {
+        var response = fetch(searchUrl, {
+            method: "POST",
+            headers: {
+                "user-agent": UserAgent.android(),
+                "referer": HOST + "/",
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "content-type": "application/x-www-form-urlencoded"
+            },
+            body: body
+        });
+        if (response && response.ok) {
+            return { doc: response.html(), url: response.url() || searchUrl };
         }
+    } catch (e) {
+        Console.log("POST fetch error: " + e);
     }
     return null;
 }
 
-function execute(key, page) {
-    var pageNum = parseInt(page || "1", 10);
-    if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
-
-    // Dùng format URL đúng: /search/{key}/{page}.html
-    var searchUrl = HOST + "/search/" + encodeURIComponent(key) + "/" + pageNum + ".html";
-
-    Console.log("Search URL: " + searchUrl);
-
-    // Dùng browserFetch trước vì trang tìm kiếm bật JS chống bot
-    var doc = browserFetch(searchUrl, 25000);
-    if (!doc) {
-        Console.log("browserFetch failed, trying fetchWithRetry...");
-        doc = fetchWithRetry(searchUrl);
+/**
+ * Parse kết quả từ trang sách chi tiết (khi redirect 1 kết quả)
+ */
+function parseBookDetailPage(doc, bookUrl) {
+    var name = "";
+    var h1 = doc.select("h1").first();
+    if (h1) name = h1.text().trim();
+    if (!name) {
+        var titleEl = doc.select("title").first();
+        if (titleEl) {
+            name = titleEl.text().replace(/\s*思兔阅读.*$/, "").replace(/\s*最新章节.*$/, "").trim();
+        }
     }
 
-    if (!doc) return Response.success([], null);
+    var cover = "";
+    var ogImg = doc.select("meta[property='og:image']").attr("content");
+    if (ogImg) {
+        cover = ogImg;
+        if (cover.startsWith("//")) cover = "https:" + cover;
+    }
 
-    var allBoxes = doc.select(".bookbox");
-    Console.log("Found .bookbox elements: " + allBoxes.size());
+    var desc = "";
+    var descEl = doc.select(".intro, #intro, [class*='intro']").first();
+    if (descEl) desc = descEl.text().trim();
 
+    var author = "";
+    var authorEl = doc.select(".author, [class*='author']").first();
+    if (authorEl) author = authorEl.text().replace(/作者[：:]\s*/g, "").trim();
+
+    if (!name) return [];
+    return [{
+        name: name,
+        link: bookUrl,
+        host: HOST,
+        cover: cover,
+        description: desc,
+        author: author
+    }];
+}
+
+/**
+ * Parse danh sách kết quả từ trang search
+ */
+function parseSearchResults(doc) {
     var data = [];
     var seen = {};
 
-    // Mỗi kết quả nằm trong .bookbox
     doc.select(".bookbox").forEach(function(box) {
-        // Lấy link và tên từ .bookname a
         var nameEl = box.select(".bookname a").first();
         if (!nameEl) return;
 
@@ -86,19 +111,14 @@ function execute(key, page) {
         var name = nameEl.text().trim();
         if (!name || name.length < 2) return;
 
-        // Lấy tác giả
         var author = "";
-        var authorEl = box.select(".author a.del_but").first();
-        if (authorEl) {
-            author = authorEl.text().trim();
-        }
+        var authorEl = box.select(".author a").first();
+        if (authorEl) author = authorEl.text().trim();
 
-        // Lấy mô tả từ .update (bỏ tiền tố "簡介：")
         var desc = "";
         var descEl = box.select(".update").first();
         if (descEl) {
             desc = descEl.text().trim();
-            // Bỏ tiền tố "簡介：" hoặc "简介："
             desc = desc.replace(/^簡介[：:]\s*/, "").replace(/^简介[：:]\s*/, "").trim();
         }
 
@@ -112,20 +132,65 @@ function execute(key, page) {
         });
     });
 
-    // Kiểm tra trang tiếp theo
-    var next = null;
-    var hasNext = false;
-    doc.select("a").forEach(function(a) {
-        var text = a.text();
-        if (text.indexOf("下一页") !== -1 || text.indexOf("下一頁") !== -1 || text.indexOf("»") !== -1) {
-            hasNext = true;
-        }
-    });
-    if (hasNext) {
-        next = String(pageNum + 1);
+    return data;
+}
+
+function execute(key, page) {
+    var pageNum = parseInt(page || "1", 10);
+    if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
+
+    Console.log("Searching: " + key + " page " + pageNum);
+
+    // Thử POST request trước
+    var result = doSearchPost(key, pageNum);
+    var doc = null;
+    var finalUrl = "";
+
+    if (result) {
+        doc = result.doc;
+        finalUrl = result.url;
+        Console.log("POST result URL: " + finalUrl);
     }
 
-    Console.log("Total search results parsed: " + data.length);
-    return Response.success(data, next);
+    // Fallback: dùng browser engine (xử lý được redirect và JS)
+    if (!doc) {
+        Console.log("POST failed, trying browser engine...");
+        var searchUrl = HOST + "/search/" + encodeURIComponent(key) + "/1.html";
+        doc = browserFetch(searchUrl, 25000);
+        if (doc) finalUrl = searchUrl;
+    }
 
+    if (!doc) return Response.success([], null);
+
+    var data = [];
+
+    // Nếu bị redirect về trang chi tiết sách (/book/xxx)
+    if (finalUrl && finalUrl.match(/\/book\/\d+/)) {
+        Console.log("Redirected to book page: " + finalUrl);
+        data = parseBookDetailPage(doc, finalUrl);
+    } else {
+        // Trang kết quả search bình thường
+        var boxes = doc.select(".bookbox");
+        Console.log("Found .bookbox elements: " + boxes.size());
+        data = parseSearchResults(doc);
+    }
+
+    Console.log("Total results: " + data.length);
+
+    // Kiểm tra trang tiếp theo
+    var next = null;
+    if (data.length > 0 && !finalUrl.match(/\/book\/\d+/)) {
+        var hasNext = false;
+        doc.select("a").forEach(function(a) {
+            var text = a.text();
+            if (text.indexOf("下一页") !== -1 || text.indexOf("下一頁") !== -1 || text.indexOf(">") !== -1) {
+                hasNext = true;
+            }
+        });
+        if (hasNext) {
+            next = String(pageNum + 1);
+        }
+    }
+
+    return Response.success(data, next);
 }
