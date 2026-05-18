@@ -46,20 +46,12 @@ function execute(key, page) {
     var pageNum = parseInt(page || "1", 10);
     if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
 
-    var searchUrl = HOST + "/search/?searchkey=" + encodeURIComponent(key) + "&page=" + pageNum;
+    // Dùng format URL đúng: /search/{key}/{page}.html
+    var searchUrl = HOST + "/search/" + encodeURIComponent(key) + "/" + pageNum + ".html";
 
-    var doc = browserFetch(searchUrl);
+    var doc = fetchWithRetry(searchUrl);
     if (!doc) {
-        var response = fetch(searchUrl, {
-            headers: {
-                "user-agent": UserAgent.android(),
-                "referer": HOST + "/",
-                "accept-language": "zh-CN,zh;q=0.9"
-            }
-        });
-        if (response && response.ok) {
-            doc = response.html();
-        }
+        doc = browserFetch(searchUrl);
     }
 
     if (!doc) return Response.success([], null);
@@ -67,8 +59,13 @@ function execute(key, page) {
     var data = [];
     var seen = {};
 
-    doc.select("a[href*='/book/']").forEach(function(e) {
-        var href = e.attr("href") || "";
+    // Mỗi kết quả nằm trong .bookbox
+    doc.select(".bookbox").forEach(function(box) {
+        // Lấy link và tên từ .bookname a
+        var nameEl = box.select(".bookname a").first();
+        if (!nameEl) return;
+
+        var href = nameEl.attr("href") || "";
         if (!href.match(/\/book\/\d+/)) return;
 
         var link = href;
@@ -79,53 +76,46 @@ function execute(key, page) {
         if (seen[link]) return;
         seen[link] = true;
 
-        var name = "";
-        var nameEl = e.select("h3, h4, .name, .title").first();
-        if (nameEl) {
-            name = nameEl.text().trim();
-        }
-        if (!name) {
-            name = e.text().trim();
-        }
+        var name = nameEl.text().trim();
         if (!name || name.length < 2) return;
 
-        var cover = "";
-        var img = e.select("img").first();
-        if (img) {
-            cover = img.attr("data-src") || img.attr("src") || "";
-            if (cover.startsWith("//")) cover = "https:" + cover;
-            if (cover && !cover.startsWith("http")) cover = HOST + cover;
+        // Lấy tác giả
+        var author = "";
+        var authorEl = box.select(".author a.del_but").first();
+        if (authorEl) {
+            author = authorEl.text().trim();
         }
 
+        // Lấy mô tả từ .update (bỏ tiền tố "簡介：")
         var desc = "";
-        var descEl = e.select(".desc, .intro, p").first();
+        var descEl = box.select(".update").first();
         if (descEl) {
             desc = descEl.text().trim();
+            // Bỏ tiền tố "簡介：" hoặc "简介："
+            desc = desc.replace(/^簡介[：:]\s*/, "").replace(/^简介[：:]\s*/, "").trim();
         }
 
         data.push({
             name: name,
             link: link,
             host: HOST,
-            cover: cover,
-            description: desc
+            cover: "",
+            description: desc,
+            author: author
         });
     });
 
+    // Kiểm tra trang tiếp theo
     var next = null;
-    var pageMatch = searchUrl.match(/page=(\d+)/);
-    if (pageMatch) {
-        var currentPage = parseInt(pageMatch[1]);
-        var hasNext = false;
-        doc.select("a").forEach(function(a) {
-            var text = a.text();
-            if (text.indexOf("下一页") !== -1 || text.indexOf("下一頁") !== -1 || text.indexOf("»") !== -1) {
-                hasNext = true;
-            }
-        });
-        if (hasNext) {
-            next = String(currentPage + 1);
+    var hasNext = false;
+    doc.select("a").forEach(function(a) {
+        var text = a.text();
+        if (text.indexOf("下一页") !== -1 || text.indexOf("下一頁") !== -1 || text.indexOf("»") !== -1) {
+            hasNext = true;
         }
+    });
+    if (hasNext) {
+        next = String(pageNum + 1);
     }
 
     return Response.success(data, next);
