@@ -22,5 +22,12 @@ function execute() {
         { title: "二次元热门", input: "groupid=1512&start={{page}}&count=20&sort=0&sub=&tag=&words=&finish=", script: "gen.js" },
         { title: "短篇热门", input: "groupid=1515&start={{page}}&count=20&sort=0&sub=&tag=&words=&finish=", script: "gen.js" },
         { title: "出版・文学热门", input: "groupid=1461&start={{page}}&count=20&sort=0&sub=&tag=&words=&finish=", script: "gen.js" }
-    ]);
+    ].filter((item) => ![
+        "mode=recommend_female",
+        "groupid=1523",
+        "groupid=1524",
+        "groupid=1516",
+        "groupid=1515",
+        "groupid=1461"
+    ].some((excluded) => item.input.indexOf(excluded) !== -1)));
 }
