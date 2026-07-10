@@ -15,6 +15,22 @@ function toLineBreaks(value) {
     return String(value || "").replace(/\r?\n/g, "<br>");
 }
 
+function pad(value) {
+    return value < 10 ? "0" + value : String(value);
+}
+
+function formatUpdateTime(value) {
+    var timestamp = Number(value || 0);
+    if (!timestamp) return "";
+    if (timestamp < 1000000000000) timestamp *= 1000;
+
+    var date = new Date(timestamp);
+    if (isNaN(date.getTime())) return "";
+
+    return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) +
+        " " + pad(date.getHours()) + ":" + pad(date.getMinutes());
+}
+
 function execute(url) {
     var bookId = getBookId(url);
     if (!bookId) return null;
@@ -38,6 +54,10 @@ function execute(url) {
     detail.push("状态：" + (book.isfinish ? "完结" : "连载中"));
     if (book.serialnum) detail.push("章节：" + book.serialnum);
     if (book.contentsize) detail.push("字数：" + book.contentsize);
+    if (book.lastSerialname) detail.push("最新章节：" + book.lastSerialname);
+
+    var updateTime = formatUpdateTime(book.lastUpdatetime || book.lastSerialUpdateTime);
+    if (updateTime) detail.push("最新更新：" + updateTime);
 
     return Response.success({
         name: book.resourceName,

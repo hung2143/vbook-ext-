@@ -5,6 +5,7 @@ function execute() {
     return Response.success([
         { title: "全站・最新更新", input: "mode=updated_all", script: "feed.js" },
         { title: "BXH・最新更新", input: "mode=updated", script: "feed.js" },
+        { title: "完本・随机推荐", input: "mode=random_finished", script: "feed.js" },
         { title: "精选推荐・男频", input: "mode=recommend_male", script: "feed.js" },
         { title: "精选推荐・女频", input: "mode=recommend_female", script: "feed.js" },
         { title: "全站・热门阅读", input: "mode=reads", script: "feed.js" },

@@ -8,7 +8,8 @@ var MODE_GROUPS = {
     score: ["1501", "1505", "1504", "1523", "1524", "1516"],
     updated: ["1501", "1505", "1504", "1523", "1524", "1516"],
     updated_all: ["1501", "1502", "1503", "1504", "1505", "1506", "1507", "1508", "1509", "1510", "1511", "1512", "1515", "1516", "1517", "1518", "1519", "1520", "1522", "1523", "1524"],
-    finished: ["1501", "1505", "1504", "1523", "1524", "1516"]
+    finished: ["1501", "1505", "1504", "1523", "1524", "1516"],
+    random_finished: ["1501", "1505", "1504", "1523", "1524", "1516"]
 };
 
 function getParam(value, name) {
@@ -60,6 +61,15 @@ function buildDescription(book) {
     return details.join("<br>");
 }
 
+function shuffleBooks(books) {
+    for (var index = books.length - 1; index > 0; index--) {
+        var randomIndex = Math.floor(Math.random() * (index + 1));
+        var temporary = books[index];
+        books[index] = books[randomIndex];
+        books[randomIndex] = temporary;
+    }
+}
+
 function execute(input, page) {
     var mode = getParam(input, "mode") || "reads";
     var groupId = getParam(input, "groupid");
@@ -78,16 +88,22 @@ function execute(input, page) {
         groupBooks.forEach(function(book) {
             var bookId = book.resourceID || book.resourceId || book.bookid || book.bookId;
             if (!bookId || !book.resourceName || seen[bookId]) return;
-            if (mode === "finished" && !book.isfinish) return;
+            if ((mode === "finished" || mode === "random_finished") && !book.isfinish) return;
 
             seen[bookId] = true;
             books.push(book);
         });
     });
 
-    books.sort(function(left, right) {
-        return compareBooks(mode, left, right);
-    });
+    if (mode === "random_finished") {
+        // execute() chạy lại khi người dùng kéo làm mới, nên danh sách sẽ được
+        // xáo lại từ cùng tập truyện hoàn tất ở mỗi lần refresh.
+        shuffleBooks(books);
+    } else {
+        books.sort(function(left, right) {
+            return compareBooks(mode, left, right);
+        });
+    }
 
     var data = books.slice(0, 20).map(function(book) {
         var bookId = book.resourceID || book.resourceId || book.bookid || book.bookId;
