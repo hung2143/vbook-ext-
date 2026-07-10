@@ -1,7 +1,7 @@
 var HOST = "https://m.kudushu.org";
-var BROWSER_TIMEOUT = 15000;
-var CHALLENGE_RETRIES = 2;
-var CHALLENGE_WAIT = 8000;
+var BROWSER_TIMEOUT = 1500;
+var BROWSER_POLL_INTERVAL = 500;
+var BROWSER_POLL_LIMIT = 18;
 
 function cleanText(value) {
     return (value || "").replace(/\s+/g, " ").trim();
@@ -25,18 +25,24 @@ function isBlocked(doc) {
     return /Just a moment|Checking your browser|Performing security verification|Verify you are human|Enable JavaScript and cookies|Cloudflare Ray ID|cf[-_]chl|challenges\.cloudflare\.com|cf-turnstile-response/i.test(text + " " + html);
 }
 
+function isReady(doc) {
+    if (!doc || isBlocked(doc)) return false;
+    try { return (doc.html() || "").length > 200; } catch (ignore) { return false; }
+}
+
 function loadWithBrowser(browser, url) {
     var doc = browser.launch(url, BROWSER_TIMEOUT);
 
-    for (var i = 0; i < CHALLENGE_RETRIES && isBlocked(doc); i++) {
-        Console.log("kudushu chapter: waiting for Cloudflare (" + (i + 1) + "/" + CHALLENGE_RETRIES + ")");
-        sleep(CHALLENGE_WAIT + i * 4000);
+    if (isReady(doc)) return doc;
+    Console.log("kudushu chapter: waiting for Cloudflare clearance");
+
+    for (var i = 0; i < BROWSER_POLL_LIMIT; i++) {
+        sleep(BROWSER_POLL_INTERVAL);
         try { doc = browser.html(); } catch (ignore) {}
-        if (!isBlocked(doc)) break;
-        doc = browser.launch(url, BROWSER_TIMEOUT);
+        if (isReady(doc)) return doc;
     }
 
-    return isBlocked(doc) ? null : doc;
+    return null;
 }
 
 function loadDoc(url, referer, browser) {
@@ -81,6 +87,13 @@ function chapterBase(url) {
     return match ? match[1] : "";
 }
 
+function normalizeChapterUrl(url) {
+    url = toUrl(url);
+    var desktop = String(url || "").match(/\/html\/(\d+)\/(\d+)\/(\d+)\.html(?:[?#].*)?$/i);
+    if (!desktop || Math.floor(parseInt(desktop[2], 10) / 1000) !== parseInt(desktop[1], 10)) return url;
+    return HOST + "/html/" + desktop[2] + "/" + desktop[3] + "/";
+}
+
 function findNextPage(doc, currentUrl, basePath) {
     var nextUrl = "";
     doc.select("a[href]").forEach(function(a) {
@@ -96,7 +109,7 @@ function findNextPage(doc, currentUrl, basePath) {
 }
 
 function execute(url) {
-    var firstUrl = toUrl(url);
+    var firstUrl = normalizeChapterUrl(url);
     var basePath = chapterBase(firstUrl);
     if (!basePath) return null;
 
@@ -127,7 +140,7 @@ function execute(url) {
 
             var nextUrl = findNextPage(doc, currentUrl, basePath);
             if (!nextUrl) break;
-            sleep(800);
+            sleep(200);
             currentUrl = nextUrl;
         }
 

@@ -1,8 +1,8 @@
 var HOST = "https://m.kudushu.org";
 var COVER_HOST = "https://www.kudushu.org";
-var BROWSER_TIMEOUT = 15000;
-var CHALLENGE_RETRIES = 2;
-var CHALLENGE_WAIT = 8000;
+var BROWSER_TIMEOUT = 1500;
+var BROWSER_POLL_INTERVAL = 500;
+var BROWSER_POLL_LIMIT = 18;
 
 function cleanText(value) {
     return (value || "").replace(/\s+/g, " ").trim();
@@ -20,8 +20,13 @@ function toUrl(link, baseUrl) {
 }
 
 function getBookId(url) {
-    var match = String(url || "").match(/\/(?:book|html)\/(\d+)/i);
-    return match ? match[1] : "";
+    url = String(url || "");
+    var desktop = url.match(/\/html\/(\d+)\/(\d+)(?:\/|$)/i);
+    if (desktop && Math.floor(parseInt(desktop[2], 10) / 1000) === parseInt(desktop[1], 10)) {
+        return desktop[2];
+    }
+    var mobile = url.match(/\/(?:book|html)\/(\d+)/i);
+    return mobile ? mobile[1] : "";
 }
 
 function toBookUrl(link) {
@@ -43,20 +48,26 @@ function isBlocked(doc) {
     return /Just a moment|Checking your browser|Performing security verification|Verify you are human|Enable JavaScript and cookies|Cloudflare Ray ID|cf[-_]chl|challenges\.cloudflare\.com|cf-turnstile-response/i.test(text + " " + html);
 }
 
+function isReady(doc) {
+    if (!doc || isBlocked(doc)) return false;
+    try { return (doc.html() || "").length > 200; } catch (ignore) { return false; }
+}
+
 function loadWithBrowser(browser, url) {
     var doc = browser.launch(url, BROWSER_TIMEOUT);
 
-    for (var i = 0; i < CHALLENGE_RETRIES && isBlocked(doc); i++) {
-        Console.log("kudushu book: waiting for Cloudflare (" + (i + 1) + "/" + CHALLENGE_RETRIES + ")");
-        sleep(CHALLENGE_WAIT + i * 4000);
+    if (isReady(doc)) return doc;
+    Console.log("kudushu book: waiting for Cloudflare clearance");
 
-        // Keep the same WebView: Cloudflare binds its clearance to this session.
+    // Poll the current WebView instead of sleeping for fixed long periods or
+    // reloading the challenge. Return as soon as Cloudflare redirects back.
+    for (var i = 0; i < BROWSER_POLL_LIMIT; i++) {
+        sleep(BROWSER_POLL_INTERVAL);
         try { doc = browser.html(); } catch (ignore) {}
-        if (!isBlocked(doc)) break;
-        doc = browser.launch(url, BROWSER_TIMEOUT);
+        if (isReady(doc)) return doc;
     }
 
-    return isBlocked(doc) ? null : doc;
+    return null;
 }
 
 function loadDoc(url) {

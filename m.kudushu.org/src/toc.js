@@ -1,7 +1,8 @@
 var HOST = "https://m.kudushu.org";
-var BROWSER_TIMEOUT = 15000;
-var CHALLENGE_RETRIES = 2;
-var CHALLENGE_WAIT = 8000;
+var DESKTOP_HOST = "https://www.kudushu.org";
+var BROWSER_TIMEOUT = 1500;
+var BROWSER_POLL_INTERVAL = 500;
+var BROWSER_POLL_LIMIT = 18;
 
 function cleanText(value) {
     return (value || "").replace(/\s+/g, " ").trim();
@@ -18,13 +19,24 @@ function toUrl(link, baseUrl) {
 }
 
 function getBookId(url) {
-    var match = String(url || "").match(/\/(?:book|html)\/(\d+)/i);
-    return match ? match[1] : "";
+    url = String(url || "");
+    var desktop = url.match(/\/html\/(\d+)\/(\d+)(?:\/|$)/i);
+    if (desktop && Math.floor(parseInt(desktop[2], 10) / 1000) === parseInt(desktop[1], 10)) {
+        return desktop[2];
+    }
+    var mobile = url.match(/\/(?:book|html)\/(\d+)/i);
+    return mobile ? mobile[1] : "";
 }
 
 function normalBookUrl(url) {
     var id = getBookId(url);
     return id ? HOST + "/book/" + id + "/" : "";
+}
+
+function desktopBookUrl(bookId) {
+    var id = parseInt(bookId, 10);
+    if (isNaN(id)) return "";
+    return DESKTOP_HOST + "/html/" + Math.floor(id / 1000) + "/" + id + "/";
 }
 
 function isBlocked(doc) {
@@ -35,18 +47,24 @@ function isBlocked(doc) {
     return /Just a moment|Checking your browser|Performing security verification|Verify you are human|Enable JavaScript and cookies|Cloudflare Ray ID|cf[-_]chl|challenges\.cloudflare\.com|cf-turnstile-response/i.test(text + " " + html);
 }
 
+function isReady(doc) {
+    if (!doc || isBlocked(doc)) return false;
+    try { return (doc.html() || "").length > 200; } catch (ignore) { return false; }
+}
+
 function loadWithBrowser(browser, url) {
     var doc = browser.launch(url, BROWSER_TIMEOUT);
 
-    for (var i = 0; i < CHALLENGE_RETRIES && isBlocked(doc); i++) {
-        Console.log("kudushu toc: waiting for Cloudflare (" + (i + 1) + "/" + CHALLENGE_RETRIES + ")");
-        sleep(CHALLENGE_WAIT + i * 4000);
+    if (isReady(doc)) return doc;
+    Console.log("kudushu toc: waiting for Cloudflare clearance");
+
+    for (var i = 0; i < BROWSER_POLL_LIMIT; i++) {
+        sleep(BROWSER_POLL_INTERVAL);
         try { doc = browser.html(); } catch (ignore) {}
-        if (!isBlocked(doc)) break;
-        doc = browser.launch(url, BROWSER_TIMEOUT);
+        if (isReady(doc)) return doc;
     }
 
-    return isBlocked(doc) ? null : doc;
+    return null;
 }
 
 function loadDoc(url, referer, browser) {
@@ -73,20 +91,40 @@ function loadDoc(url, referer, browser) {
     }
 }
 
-function isChapterUrl(href, bookId) {
-    return new RegExp("/html/" + bookId + "/\\d+(?:_\\d+)?/?(?:[?#].*)?$", "i").test(href || "");
+function chapterId(href, bookId) {
+    href = String(href || "").replace(/[?#].*$/, "");
+
+    var mobile = href.match(new RegExp("/html/" + bookId + "/(\\d+)(?:_\\d+)?/?$", "i"));
+    if (mobile) return parseInt(mobile[1], 10);
+
+    var desktop = href.match(new RegExp("/html/\\d+/" + bookId + "/(\\d+)\\.html$", "i"));
+    return desktop ? parseInt(desktop[1], 10) : 0;
 }
 
-function addLinks(links, bookId, baseUrl, data, seen) {
+function canonicalChapterUrl(bookId, id) {
+    return id ? HOST + "/html/" + bookId + "/" + id + "/" : "";
+}
+
+function isDesktopChapterUrl(url, bookId) {
+    return new RegExp("/html/\\d+/" + bookId + "/\\d+\\.html(?:[?#].*)?$", "i").test(url || "");
+}
+
+function addLinks(links, bookId, baseUrl, data, seen, desktopOnly) {
     links.forEach(function(a) {
         var href = a.attr("href") || "";
-        if (!isChapterUrl(href, bookId)) return;
-        var chapterUrl = toUrl(href, baseUrl);
+        var resolvedUrl = toUrl(href, baseUrl);
+        if (desktopOnly && !isDesktopChapterUrl(resolvedUrl, bookId)) return;
+        var id = chapterId(resolvedUrl, bookId);
+        var chapterUrl = canonicalChapterUrl(bookId, id);
         var name = cleanText(a.text());
         if (!chapterUrl || !name || seen[chapterUrl]) return;
         seen[chapterUrl] = true;
-        data.push({ name: name, url: chapterUrl, host: HOST });
+        data.push({ name: name, url: chapterUrl, host: HOST, order: id });
     });
+}
+
+function addDesktopChapters(doc, bookId, baseUrl, data, seen) {
+    addLinks(doc.select("a[href]"), bookId, baseUrl, data, seen, true);
 }
 
 function addChapters(doc, bookId, baseUrl, data, seen) {
@@ -96,15 +134,23 @@ function addChapters(doc, bookId, baseUrl, data, seen) {
     ];
 
     for (var i = 0; i < selectors.length; i++) {
-        var links = doc.select(selectors[i]);
-        var before = data.length;
-        addLinks(links, bookId, baseUrl, data, seen);
-        if (data.length > before) return;
+        addLinks(doc.select(selectors[i]), bookId, baseUrl, data, seen);
     }
 
     // Older mobile templates do not label the chapter container.  Their chapter
-    // links are still unambiguous by URL, so retain this final compatibility path.
-    addLinks(doc.select("a[href*='/html/" + bookId + "/']"), bookId, baseUrl, data, seen);
+    // links are still unambiguous by URL. Always scan them too: some templates
+    // put the latest preview and the main catalog in different containers.
+    addLinks(doc.select("a[href*='" + bookId + "/']"), bookId, baseUrl, data, seen);
+}
+
+function sortChapters(data) {
+    data.sort(function(left, right) {
+        return (left.order || chapterId(left.url, getBookId(left.url))) -
+            (right.order || chapterId(right.url, getBookId(right.url)));
+    });
+
+    data.forEach(function(chapter) { delete chapter.order; });
+    return data;
 }
 
 function pageIndex(url) {
@@ -144,22 +190,29 @@ function execute(url) {
     try {
         browser.setUserAgent(UserAgent.android());
 
+        // The desktop catalog contains all chapters on one page. This avoids
+        // loading one mobile asc-* page for every group of 20 chapters.
+        var desktopUrl = desktopBookUrl(bookId);
+        var desktopDoc = loadDoc(desktopUrl, DESKTOP_HOST + "/", browser);
+        var data = [];
+        var seen = {};
+        if (desktopDoc) addDesktopChapters(desktopDoc, bookId, desktopUrl, data, seen);
+        if (data.length) return Response.success(sortChapters(data));
+
         var doc = loadDoc(baseUrl, HOST + "/", browser);
         if (!doc) return Response.error("Kudushu đang yêu cầu xác minh Cloudflare. Hãy thử lại sau khi mở trang nguồn trong trình duyệt.");
 
-        var data = [];
-        var seen = {};
         addChapters(doc, bookId, baseUrl, data, seen);
 
         var pages = collectPages(doc, bookId, baseUrl);
         for (var i = 0; i < pages.length; i++) {
             if (pages[i] === baseUrl || pageIndex(pages[i]) <= 1) continue;
-            sleep(1200);
+            sleep(200);
             var pageDoc = loadDoc(pages[i], baseUrl, browser);
             if (pageDoc) addChapters(pageDoc, bookId, pages[i], data, seen);
         }
 
-        return Response.success(data);
+        return Response.success(sortChapters(data));
     } finally {
         try { browser.close(); } catch (ignore) {}
     }

@@ -1,8 +1,8 @@
 var HOST = "https://m.kudushu.org";
 var COVER_HOST = "https://www.kudushu.org";
-var BROWSER_TIMEOUT = 15000;
-var CHALLENGE_RETRIES = 2;
-var CHALLENGE_WAIT = 8000;
+var BROWSER_TIMEOUT = 1500;
+var BROWSER_POLL_INTERVAL = 500;
+var BROWSER_POLL_LIMIT = 18;
 
 var GENRE_IDS = {
     "玄幻魔法": 1,
@@ -53,8 +53,13 @@ function toUrl(link) {
 }
 
 function getBookId(url) {
-    var match = String(url || "").match(/\/(?:book|html)\/(\d+)/i);
-    return match ? match[1] : "";
+    url = String(url || "");
+    var desktop = url.match(/\/html\/(\d+)\/(\d+)(?:\/|$)/i);
+    if (desktop && Math.floor(parseInt(desktop[2], 10) / 1000) === parseInt(desktop[1], 10)) {
+        return desktop[2];
+    }
+    var mobile = url.match(/\/(?:book|html)\/(\d+)/i);
+    return mobile ? mobile[1] : "";
 }
 
 function buildCover(bookId) {
@@ -71,18 +76,24 @@ function isBlocked(doc) {
     return /Just a moment|Checking your browser|Performing security verification|Verify you are human|Enable JavaScript and cookies|Attention Required|Access denied|Cloudflare Ray ID|cf[-_]chl|challenges\.cloudflare\.com|cf-turnstile-response/i.test(text + " " + html);
 }
 
+function isReady(doc) {
+    if (!doc || isBlocked(doc)) return false;
+    try { return (doc.html() || "").length > 200; } catch (ignore) { return false; }
+}
+
 function loadWithBrowser(browser, url) {
     var doc = browser.launch(url, BROWSER_TIMEOUT);
 
-    for (var i = 0; i < CHALLENGE_RETRIES && isBlocked(doc); i++) {
-        Console.log("kudushu detail: waiting for Cloudflare (" + (i + 1) + "/" + CHALLENGE_RETRIES + ")");
-        sleep(CHALLENGE_WAIT + i * 4000);
+    if (isReady(doc)) return doc;
+    Console.log("kudushu detail: waiting for Cloudflare clearance");
+
+    for (var i = 0; i < BROWSER_POLL_LIMIT; i++) {
+        sleep(BROWSER_POLL_INTERVAL);
         try { doc = browser.html(); } catch (ignore) {}
-        if (!isBlocked(doc)) break;
-        doc = browser.launch(url, BROWSER_TIMEOUT);
+        if (isReady(doc)) return doc;
     }
 
-    return isBlocked(doc) ? null : doc;
+    return null;
 }
 
 function loadDoc(url) {
