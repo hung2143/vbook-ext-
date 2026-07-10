@@ -132,7 +132,49 @@ function parseBooks(doc) {
         if (data.length > 0) return data;
     }
 
-    // === Strategy 2: li chứa img và link /book/ ===
+    // === Strategy 2: bảng thư viện /shuku/ ===
+    // Mỗi hàng gồm: tên truyện, chương mới, tác giả, số chữ, ngày cập nhật, trạng thái.
+    var rows = doc.select("#jieqi_page_contents tr");
+    Console.log("book: shuku row count=" + rows.size());
+
+    rows.forEach(function(row) {
+        var nameLink = row.select("a.pop[href*='/book/']").first();
+        if (!nameLink) return;
+
+        var href = nameLink.attr("href") || "";
+        var bookIdMatch = href.match(/\/book\/(\d+)/);
+        if (!bookIdMatch) return;
+
+        var bookId = bookIdMatch[1];
+        var link = normalizeUrl(href);
+        if (seen[link]) return;
+        seen[link] = true;
+
+        var name = nameLink.text().trim();
+        if (!name || name.length < 2) return;
+
+        var cells = row.select("td");
+        var author = cells.size() > 2 ? cells.get(2).text().replace(/著$/, "").trim() : "";
+        var updated = cells.size() > 4 ? cells.get(4).text().trim() : "";
+        var status = cells.size() > 5 ? cells.get(5).text().trim() : "";
+        var descriptionParts = [];
+
+        if (author) descriptionParts.push(author);
+        if (updated) descriptionParts.push("更新：" + updated);
+        if (status) descriptionParts.push(status);
+
+        data.push({
+            name: name,
+            link: link,
+            host: HOST,
+            cover: buildCoverUrl(bookId),
+            description: descriptionParts.join(" - ")
+        });
+    });
+
+    if (data.length > 0) return data;
+
+    // === Strategy 3: li chứa img và link /book/ ===
     var items = doc.select("li");
     Console.log("book: li fallback count=" + items.size());
     items.forEach(function(li) {
@@ -178,7 +220,7 @@ function parseBooks(doc) {
 
 function parsePagedUrl(url) {
     var cleanUrl = normalizeUrl(url).replace(/[?#].*$/, "");
-    var match = cleanUrl.match(/^(.*_)(\d+)(\.html)$/);
+    var match = cleanUrl.match(/^(.*[_\/])(\d+)(\.html)$/);
     if (!match) return null;
 
     return {
@@ -186,6 +228,10 @@ function parsePagedUrl(url) {
         page: parseInt(match[2], 10),
         suffix: match[3]
     };
+}
+
+function buildPageUrl(url, pageNum) {
+    return url.replace(/([_\/])\d+\.html([?#].*)?$/, "$1" + pageNum + ".html$2");
 }
 
 function findNextPage(doc, targetUrl) {
@@ -216,8 +262,8 @@ function execute(url, page) {
 
     var targetUrl = url;
     if (pageNum > 1) {
-        // URL dạng /class_1_1.html hoặc /top/allvisit_1.html
-        targetUrl = url.replace(/_(\d+)\.html$/, "_" + pageNum + ".html");
+        // Hỗ trợ cả /class_1_1.html và /shuku/.../lastupdate/1.html.
+        targetUrl = buildPageUrl(url, pageNum);
     }
 
     Console.log("book: fetching " + targetUrl);

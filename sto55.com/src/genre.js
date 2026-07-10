@@ -1,15 +1,32 @@
 var HOST = "https://sto55.com";
 
 function execute() {
-    return Response.success([
-        { title: "玄幻奇幻", input: HOST + "/class_1_1.html", script: "book.js" },
-        { title: "武俠仙俠", input: HOST + "/class_2_1.html", script: "book.js" },
-        { title: "現代都市", input: HOST + "/class_3_1.html", script: "book.js" },
-        { title: "歷史軍事", input: HOST + "/class_4_1.html", script: "book.js" },
-        { title: "科幻小說", input: HOST + "/class_5_1.html", script: "book.js" },
-        { title: "遊戲競技", input: HOST + "/class_6_1.html", script: "book.js" },
-        { title: "恐怖靈異", input: HOST + "/class_7_1.html", script: "book.js" },
-        { title: "言情小說", input: HOST + "/class_8_1.html", script: "book.js" },
-        { title: "其他類型", input: HOST + "/class_9_1.html", script: "book.js" }
-    ]);
+    var categories = [
+        { title: "玄幻奇幻", id: 1 },
+        { title: "武俠仙俠", id: 2 },
+        { title: "現代都市", id: 3 },
+        { title: "歷史軍事", id: 4 },
+        { title: "科幻小說", id: 5 },
+        { title: "遊戲競技", id: 6 },
+        { title: "恐怖靈異", id: 7 },
+        { title: "言情小說", id: 8 },
+        { title: "其他類型", id: 9 }
+    ];
+    var data = [];
+
+    categories.forEach(function(category) {
+        var baseUrl = HOST + "/shuku/0/" + category.id + "/0/0/0/0/";
+        data.push({
+            title: category.title + " - 最新更新",
+            input: baseUrl + "lastupdate/1.html",
+            script: "book.js"
+        });
+        data.push({
+            title: category.title + " - 月點擊榜",
+            input: baseUrl + "monthvisit/1.html",
+            script: "book.js"
+        });
+    });
+
+    return Response.success(data);
 }
