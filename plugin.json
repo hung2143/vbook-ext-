@@ -6,28 +6,6 @@
   },
   "data": [
     {
-      "name": "Trang Truyện",
-      "author": "Hung",
-      "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/TrangTruyen/plugin.zip",
-      "version": 4,
-      "source": "https://trangtruyen.site/",
-      "icon": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/TrangTruyen/icon.png",
-      "description": "Đọc truyện trên trang https://trangtruyen.site/",
-      "type": "novel",
-      "locale": "vi_VN"
-    },
-    {
-      "name": "Kho Truyện Chữ",
-      "author": "Hung",
-      "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/KhoTruyenChu/plugin.zip",
-      "version": 1,
-      "source": "https://khotruyenchu.click/",
-      "icon": "",
-      "description": "Đọc truyện trên trang https://khotruyenchu.click/",
-      "type": "novel",
-      "locale": "vi_VN"
-    },
-    {
       "name": "AI Truyện",
       "author": "Hung",
       "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/AiTruyen/plugin.zip",
@@ -53,7 +31,7 @@
       "name": "Kudushu",
       "author": "Hung",
       "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/m.kudushu.org/plugin.zip",
-      "version": 5,
+      "version": 6,
       "source": "https://m.kudushu.org/",
       "icon": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/m.kudushu.org/icon.png",
       "description": "Đọc truyện trên Khổ Đọc Sách (m.kudushu.org)",
@@ -86,7 +64,7 @@
       "name": "QQ阅读 HTML5",
       "author": "Hung",
       "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/html5qq/plugin.zip",
-      "version": 13,
+      "version": 14,
       "source": "https://bookshelf.html5.qq.com/qbread/categorylist?ch=001995&groupid=1501",
       "icon": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/html5qq/icon.png",
       "description": "Đọc truyện trên QQ阅读 HTML5",

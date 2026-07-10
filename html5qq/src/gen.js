@@ -18,7 +18,10 @@ function buildDescription(book) {
     var parts = [];
     if (book.author) parts.push(book.author);
     if (book.subject) parts.push(book.subject + (book.subtype ? "・" + book.subtype : ""));
-    if (book.summary) parts.push(book.summary);
+    if (book.summary) {
+        var summary = String(book.summary).replace(/\s+/g, " ").trim();
+        parts.push(summary.length > 180 ? summary.substring(0, 180) + "…" : summary);
+    }
     return parts.join("<br>");
 }
 

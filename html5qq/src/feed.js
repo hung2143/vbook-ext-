@@ -1,5 +1,6 @@
 var API_HOST = "https://bookshelf.html5.qq.com";
 var RANK_API = API_HOST + "/qbread/api/rank/list";
+var GROUPS_PER_LOAD = 2;
 
 var MODE_GROUPS = {
     recommend_male: ["1501", "1505", "1504", "1512"],
@@ -57,8 +58,31 @@ function buildDescription(book) {
     if (book.subject) details.push(book.subject + (book.subtype ? "・" + book.subtype : ""));
     if (book.userscore) details.push("评分 " + book.userscore);
     if (book.userReadNumber || book.sValue) details.push("阅读 " + (book.userReadNumber || book.sValue));
-    if (book.summary) details.push(book.summary);
+    if (book.summary) details.push(shortText(book.summary, 180));
     return details.join("<br>");
+}
+
+function shortText(value, limit) {
+    value = String(value || "").replace(/\s+/g, " ").trim();
+    return value.length > limit ? value.substring(0, limit) + "…" : value;
+}
+
+function getGroupBatch(groups, pageNumber, hasExplicitGroup) {
+    if (hasExplicitGroup) {
+        return { groups: groups, sourcePage: pageNumber };
+    }
+
+    // Không gọi tuần tự 6–21 API chỉ để dựng một màn hình. Mỗi màn hình lấy
+    // tối đa hai nhóm, lần lượt quay vòng qua toàn bộ nhóm ở các trang sau.
+    var batchCount = Math.ceil(groups.length / GROUPS_PER_LOAD);
+    var batchIndex = (pageNumber - 1) % batchCount;
+    var sourcePage = Math.floor((pageNumber - 1) / batchCount) + 1;
+    var start = batchIndex * GROUPS_PER_LOAD;
+
+    return {
+        groups: groups.slice(start, start + GROUPS_PER_LOAD),
+        sourcePage: sourcePage
+    };
 }
 
 function shuffleBooks(books) {
@@ -77,12 +101,13 @@ function execute(input, page) {
     var pageNumber = parseInt(page || "1", 10);
     if (isNaN(pageNumber) || pageNumber < 1) pageNumber = 1;
 
+    var batch = getGroupBatch(groups, pageNumber, !!groupId);
     var books = [];
     var seen = {};
     var hasRows = false;
 
-    groups.forEach(function(groupId) {
-        var groupBooks = fetchGroup(groupId, pageNumber);
+    batch.groups.forEach(function(groupId) {
+        var groupBooks = fetchGroup(groupId, batch.sourcePage);
         if (groupBooks.length) hasRows = true;
 
         groupBooks.forEach(function(book) {
@@ -116,5 +141,5 @@ function execute(input, page) {
         };
     });
 
-    return Response.success(data, hasRows ? String(pageNumber + 1) : null);
+    return Response.success(data, hasRows && data.length ? String(pageNumber + 1) : null);
 }
