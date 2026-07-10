@@ -1,120 +1,80 @@
 var HOST = "https://m.kudushu.org";
 
-function normalizeUrl(link) {
-    if (!link) return "";
-    if (link.indexOf("//") === 0) return "https:" + link;
-    if (link.indexOf("http") === 0) return link;
-    if (link.indexOf("/") === 0) return HOST + link;
-    return HOST + "/" + link;
+var FALLBACK_GENRES = [
+    { title: "玄幻魔法", id: 1 }, { title: "武侠修真", id: 2 },
+    { title: "都市言情", id: 3 }, { title: "历史军事", id: 4 },
+    { title: "侦探推理", id: 5 }, { title: "网游动漫", id: 6 },
+    { title: "科幻小说", id: 7 }, { title: "恐怖灵异", id: 8 },
+    { title: "言情小说", id: 9 }, { title: "其他类型", id: 10 },
+    { title: "经部", id: 11 }, { title: "史书", id: 12 },
+    { title: "子部", id: 13 }, { title: "集部", id: 14 },
+    { title: "四库之外", id: 15 }, { title: "古典书籍", id: 16 },
+    { title: "诗歌", id: 17 }, { title: "宋词", id: 18 }
+];
+
+function cleanText(value) {
+    return (value || "").replace(/\s+/g, " ").trim();
 }
 
-function isCloudflare(doc) {
+function toUrl(link) {
+    if (!link) return "";
+    if (link.indexOf("//") === 0) return "https:" + link;
+    if (/^https?:/i.test(link)) return link.replace(/^http:\/\//i, "https://");
+    return HOST + (link.charAt(0) === "/" ? link : "/" + link);
+}
+
+function isBlocked(doc) {
     if (!doc) return true;
     var text = doc.text() || "";
-    if (text.indexOf("Just a moment") !== -1) return true;
-    if (text.indexOf("cf_chl") !== -1) return true;
-    if (text.indexOf("Checking your browser") !== -1) return true;
-    if (text.indexOf("Enable JavaScript and cookies") !== -1) return true;
-    return false;
+    return /Just a moment|Checking your browser|Enable JavaScript and cookies|cf[-_]chl|challenges\.cloudflare\.com/i.test(text);
 }
 
 function loadDoc(url) {
+    try {
+        var response = fetch(url, {
+            headers: { "user-agent": UserAgent.android(), "referer": HOST + "/", "accept-language": "zh-CN,zh;q=0.9" }
+        });
+        if (response && response.ok && !isBlocked(response.html())) return response.html();
+    } catch (ignore) {}
+
     var browser = Engine.newBrowser();
     try {
         browser.setUserAgent(UserAgent.android());
-        var doc = browser.launch(url, 30000);
-
-        if (isCloudflare(doc)) {
-            sleep(10000);
-            doc = browser.launch(url, 30000);
+        var doc = browser.launch(url, 25000);
+        if (isBlocked(doc)) {
+            sleep(4000);
+            doc = browser.launch(url, 25000);
         }
-        if (isCloudflare(doc)) {
-            sleep(15000);
-            doc = browser.launch(url, 30000);
-        }
-
-        if (doc && !isCloudflare(doc)) {
-            browser.close();
-            return doc;
-        }
+        return isBlocked(doc) ? null : doc;
     } catch (e) {
-        Console.log("genre browser error: " + e);
+        Console.log("kudushu genre: " + e);
+        return null;
+    } finally {
+        try { browser.close(); } catch (ignore2) {}
     }
-    try { browser.close(); } catch (e2) {}
+}
 
-    try {
-        var response = fetch(url, {
-            headers: {
-                "user-agent": UserAgent.android(),
-                "referer": HOST + "/"
-            }
-        });
-        if (response.ok) {
-            var fdoc = response.html();
-            if (!isCloudflare(fdoc)) return fdoc;
-        }
-    } catch (e3) {}
-
-    return null;
+function fallback() {
+    var data = [];
+    FALLBACK_GENRES.forEach(function(genre) {
+        data.push({ title: genre.title, input: HOST + "/sort/" + genre.id + "/1.html", script: "book.js" });
+    });
+    return data;
 }
 
 function execute() {
     var doc = loadDoc(HOST + "/modules/article/sortselect.php");
-
-    if (!doc) {
-        // If we can't load genre page, return hardcoded genres
-        return Response.success([
-            { title: "Xuan hoan", input: HOST + "/sort/1/1.html", script: "book.js" },
-            { title: "Tu tien", input: HOST + "/sort/2/1.html", script: "book.js" },
-            { title: "Do thi", input: HOST + "/sort/3/1.html", script: "book.js" },
-            { title: "Lich su", input: HOST + "/sort/4/1.html", script: "book.js" },
-            { title: "Khoa huyen", input: HOST + "/sort/5/1.html", script: "book.js" },
-            { title: "Mao hiem", input: HOST + "/sort/6/1.html", script: "book.js" },
-            { title: "Vo hiep", input: HOST + "/sort/7/1.html", script: "book.js" },
-            { title: "Quan su", input: HOST + "/sort/8/1.html", script: "book.js" },
-            { title: "Kinh di", input: HOST + "/sort/9/1.html", script: "book.js" },
-            { title: "Ngon tinh", input: HOST + "/sort/10/1.html", script: "book.js" },
-            { title: "Tong tai", input: HOST + "/sort/11/1.html", script: "book.js" },
-            { title: "Khac", input: HOST + "/sort/12/1.html", script: "book.js" }
-        ]);
-    }
+    if (!doc) return Response.success(fallback());
 
     var data = [];
     var seen = {};
-
-    // Try standard selectors
-    doc.select(".menu_nav a[href*='/sort/']").forEach(function(a) {
-        var href = normalizeUrl(a.attr("href"));
-        var title = (a.text() || "").replace(/\s+/g, " ").trim();
+    doc.select("a[href*='/sort/']").forEach(function(a) {
+        var href = toUrl(a.attr("href") || "");
+        var title = cleanText(a.text());
         if (!href || !title || seen[href]) return;
         seen[href] = true;
         data.push({ title: title, input: href, script: "book.js" });
     });
 
-    // Broader fallback
-    if (data.length === 0) {
-        doc.select("a[href*='/sort/']").forEach(function(a) {
-            var href = normalizeUrl(a.attr("href"));
-            var title = (a.text() || "").replace(/\s+/g, " ").trim();
-            if (!href || !title || title.length > 20 || seen[href]) return;
-            seen[href] = true;
-            data.push({ title: title, input: href, script: "book.js" });
-        });
-    }
-
-    if (data.length === 0) {
-        // Return hardcoded genres as last resort
-        return Response.success([
-            { title: "Xuan hoan", input: HOST + "/sort/1/1.html", script: "book.js" },
-            { title: "Tu tien", input: HOST + "/sort/2/1.html", script: "book.js" },
-            { title: "Do thi", input: HOST + "/sort/3/1.html", script: "book.js" },
-            { title: "Lich su", input: HOST + "/sort/4/1.html", script: "book.js" },
-            { title: "Khoa huyen", input: HOST + "/sort/5/1.html", script: "book.js" },
-            { title: "Mao hiem", input: HOST + "/sort/6/1.html", script: "book.js" },
-            { title: "Vo hiep", input: HOST + "/sort/7/1.html", script: "book.js" },
-            { title: "Quan su", input: HOST + "/sort/8/1.html", script: "book.js" }
-        ]);
-    }
-
-    return Response.success(data);
+    return Response.success(data.length ? data : fallback());
 }

@@ -1,94 +1,148 @@
 var HOST = "https://m.kudushu.org";
 
-function normalizeUrl(link) {
-    if (!link) return "";
-    if (link.indexOf("//") === 0) return "https:" + link;
-    if (link.indexOf("http") === 0) return link;
-    if (link.indexOf("/") === 0) return HOST + link;
-    return HOST + "/" + link;
+function cleanText(value) {
+    return (value || "").replace(/\s+/g, " ").trim();
 }
 
-function normalizeHost(url) {
-    if (!url) return url;
-    return url.replace(/https?:\/\/(www\.)?kudushu\.org/i, HOST);
+function toUrl(link, baseUrl) {
+    link = cleanText(link);
+    if (!link || /^javascript:|^#/i.test(link)) return "";
+    if (link.indexOf("//") === 0) return "https:" + link;
+    if (/^https?:/i.test(link)) return link.replace(/^http:\/\//i, "https://");
+    if (link.charAt(0) === "/") return HOST + link;
+    baseUrl = (baseUrl || HOST + "/").replace(/[?#].*$/, "");
+    return baseUrl.substring(0, baseUrl.lastIndexOf("/") + 1) + link;
 }
 
 function getBookId(url) {
-    var m = url.match(/\/book\/(\d+)/);
-    if (m) return m[1];
-    var m2 = url.match(/\/html\/(\d+)/);
-    if (m2) return m2[1];
-    return "";
+    var match = String(url || "").match(/\/(?:book|html)\/(\d+)/i);
+    return match ? match[1] : "";
 }
 
-function isCloudflare(doc) {
+function normalBookUrl(url) {
+    var id = getBookId(url);
+    return id ? HOST + "/book/" + id + "/" : "";
+}
+
+function isBlocked(doc) {
     if (!doc) return true;
     var text = doc.text() || "";
-    return text.indexOf("Just a moment") !== -1 || text.indexOf("Enable JavaScript and cookies") !== -1;
+    return /Just a moment|Checking your browser|Enable JavaScript and cookies|cf[-_]chl|challenges\.cloudflare\.com/i.test(text);
 }
 
-function browserLoad(url) {
+function loadDoc(url, referer) {
+    try {
+        var response = fetch(url, {
+            headers: {
+                "user-agent": UserAgent.android(),
+                "referer": referer || HOST + "/",
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "accept-language": "zh-CN,zh;q=0.9"
+            }
+        });
+        if (response && response.ok) {
+            var fetched = response.html();
+            if (!isBlocked(fetched)) return fetched;
+        }
+    } catch (ignore) {}
+
     var browser = Engine.newBrowser();
     try {
         browser.setUserAgent(UserAgent.android());
-        var doc = browser.launch(url, 30000);
-        if (isCloudflare(doc)) { sleep(10000); doc = browser.launch(url, 30000); }
-        if (isCloudflare(doc)) { sleep(15000); doc = browser.launch(url, 30000); }
-        if (doc && !isCloudflare(doc)) { browser.close(); return doc; }
-    } catch (e) { Console.log("toc browser error: " + e); }
-    try { browser.close(); } catch (e2) {}
-
-    try {
-        var resp = fetch(url, { headers: { "user-agent": UserAgent.android(), "referer": HOST + "/" } });
-        if (resp.ok) { var fd = resp.html(); if (!isCloudflare(fd)) return fd; }
-    } catch (e3) {}
-    return null;
+        var doc = browser.launch(url, 25000);
+        if (isBlocked(doc)) {
+            sleep(4000);
+            doc = browser.launch(url, 25000);
+        }
+        return isBlocked(doc) ? null : doc;
+    } catch (e) {
+        Console.log("kudushu toc: " + e);
+        return null;
+    } finally {
+        try { browser.close(); } catch (ignore2) {}
+    }
 }
 
-function addChapters(doc, bookId, data, seen) {
-    var selector = "a[href*='/html/" + bookId + "/']";
-    doc.select(selector).forEach(function(a) {
-        var href = a.attr("href");
-        if (!href || !href.match(/\/html\/\d+\/\d+/)) return;
-        var name = (a.text() || "").replace(/\s+/g, " ").trim();
-        if (!name) return;
-        var url = normalizeUrl(href);
-        if (seen[url]) return;
-        seen[url] = true;
-        data.push({ name: name, url: url, host: HOST });
+function isChapterUrl(href, bookId) {
+    return new RegExp("/html/" + bookId + "/\\d+(?:_\\d+)?/?(?:[?#].*)?$", "i").test(href || "");
+}
+
+function addLinks(links, bookId, baseUrl, data, seen) {
+    links.forEach(function(a) {
+        var href = a.attr("href") || "";
+        if (!isChapterUrl(href, bookId)) return;
+        var chapterUrl = toUrl(href, baseUrl);
+        var name = cleanText(a.text());
+        if (!chapterUrl || !name || seen[chapterUrl]) return;
+        seen[chapterUrl] = true;
+        data.push({ name: name, url: chapterUrl, host: HOST });
     });
 }
 
-function execute(url) {
-    url = normalizeHost(url);
-    var bookId = getBookId(url);
-    if (!bookId) return null;
+function addChapters(doc, bookId, baseUrl, data, seen) {
+    var selectors = [
+        "#chapterlist a", "#catalog a", ".chapterlist a", ".chapter-list a",
+        ".cataloglist a", ".catalog-list a", ".article_list a", ".chapter a"
+    ];
 
-    var baseUrl = HOST + "/book/" + bookId + "/";
-    var doc = browserLoad(baseUrl);
+    for (var i = 0; i < selectors.length; i++) {
+        var links = doc.select(selectors[i]);
+        var before = data.length;
+        addLinks(links, bookId, baseUrl, data, seen);
+        if (data.length > before) return;
+    }
+
+    // Older mobile templates do not label the chapter container.  Their chapter
+    // links are still unambiguous by URL, so retain this final compatibility path.
+    addLinks(doc.select("a[href*='/html/" + bookId + "/']"), bookId, baseUrl, data, seen);
+}
+
+function pageIndex(url) {
+    var match = String(url || "").match(/\/asc-(\d+)\/?(?:[?#].*)?$/i);
+    return match ? parseInt(match[1], 10) : 0;
+}
+
+function collectPages(doc, bookId, baseUrl) {
+    var pages = [];
+    var seen = {};
+
+    function add(value) {
+        var pageUrl = toUrl(value, baseUrl);
+        if (!pageUrl || !new RegExp("/html/" + bookId + "/asc-\\d+/?(?:[?#].*)?$", "i").test(pageUrl)) return;
+        if (seen[pageUrl]) return;
+        seen[pageUrl] = true;
+        pages.push(pageUrl);
+    }
+
+    doc.select("select[name='pageselect'] option, .pageselect option").forEach(function(option) {
+        add(option.attr("value") || "");
+    });
+    doc.select("a[href*='/html/" + bookId + "/asc-']").forEach(function(a) {
+        add(a.attr("href") || "");
+    });
+
+    pages.sort(function(left, right) { return pageIndex(left) - pageIndex(right); });
+    return pages;
+}
+
+function execute(url) {
+    var bookId = getBookId(url);
+    var baseUrl = normalBookUrl(url);
+    if (!bookId || !baseUrl) return null;
+
+    var doc = loadDoc(baseUrl, HOST + "/");
     if (!doc) return null;
 
     var data = [];
     var seen = {};
-    addChapters(doc, bookId, data, seen);
+    addChapters(doc, bookId, baseUrl, data, seen);
 
-    var pages = [];
-    var select = doc.select("select[name='pageselect']").first();
-    if (select) {
-        var options = select.select("option");
-        for (var i = 0; i < options.size(); i++) {
-            var v = options.get(i).attr("value");
-            if (v) pages.push(normalizeUrl(v));
-        }
-    }
-
-    for (var p = 0; p < pages.length; p++) {
-        var pageUrl = pages[p];
-        if (pageUrl === baseUrl) continue;
-        sleep(3000);
-        var pageDoc = browserLoad(pageUrl);
-        if (!pageDoc) continue;
-        addChapters(pageDoc, bookId, data, seen);
+    var pages = collectPages(doc, bookId, baseUrl);
+    for (var i = 0; i < pages.length; i++) {
+        if (pages[i] === baseUrl || pageIndex(pages[i]) <= 1) continue;
+        sleep(1200);
+        var pageDoc = loadDoc(pages[i], baseUrl);
+        if (pageDoc) addChapters(pageDoc, bookId, pages[i], data, seen);
     }
 
     return Response.success(data);

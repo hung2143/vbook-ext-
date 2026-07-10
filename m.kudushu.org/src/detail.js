@@ -1,101 +1,150 @@
 var HOST = "https://m.kudushu.org";
+var COVER_HOST = "https://www.kudushu.org";
 
-function normalizeUrl(link) {
-    if (!link) return "";
-    if (link.indexOf("//") === 0) return "https:" + link;
-    if (link.indexOf("http://") === 0) return "https://" + link.substring(7);
-    if (link.indexOf("http") === 0) return link;
-    if (link.indexOf("/") === 0) return HOST + link;
-    return HOST + "/" + link;
+function cleanText(value) {
+    return (value || "").replace(/\s+/g, " ").trim();
 }
 
-function normalizeHost(url) {
-    if (!url) return url;
-    return url.replace(/https?:\/\/(www\.)?kudushu\.org/i, HOST);
+function toUrl(link) {
+    link = cleanText(link);
+    if (!link) return "";
+    if (link.indexOf("//") === 0) return "https:" + link;
+    if (/^https?:/i.test(link)) return link.replace(/^http:\/\//i, "https://");
+    return HOST + (link.charAt(0) === "/" ? link : "/" + link);
 }
 
 function getBookId(url) {
-    var m = url.match(/\/book\/(\d+)/);
-    if (m) return m[1];
-    var m2 = url.match(/\/html\/(\d+)/);
-    if (m2) return m2[1];
-    return "";
+    var match = String(url || "").match(/\/(?:book|html)\/(\d+)/i);
+    return match ? match[1] : "";
 }
 
-function isCloudflare(doc) {
+function buildCover(bookId) {
+    var id = parseInt(bookId, 10);
+    if (isNaN(id)) return "";
+    return COVER_HOST + "/files/article/image/" + Math.floor(id / 1000) + "/" + id + "/" + id + "s.jpg";
+}
+
+function isBlocked(doc) {
     if (!doc) return true;
     var text = doc.text() || "";
-    return text.indexOf("Just a moment") !== -1 || text.indexOf("Enable JavaScript and cookies") !== -1;
+    return /Just a moment|Checking your browser|Enable JavaScript and cookies|cf[-_]chl|challenges\.cloudflare\.com/i.test(text);
 }
 
-function extractInfoText(doc, label) {
-    var text = "";
-    doc.select(".infotype p, .book-info p, .info p").forEach(function(p) {
-        var t = (p.text() || "").trim();
-        if (t.indexOf(label) === 0) {
-            text = t.replace(label, "").replace(/^[：:]/, "").trim();
+function loadDoc(url) {
+    try {
+        var response = fetch(url, {
+            headers: {
+                "user-agent": UserAgent.android(),
+                "referer": HOST + "/",
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "accept-language": "zh-CN,zh;q=0.9"
+            }
+        });
+        if (response && response.ok) {
+            var fetched = response.html();
+            if (!isBlocked(fetched)) return fetched;
         }
-    });
-    return text;
-}
+    } catch (ignore) {}
 
-function execute(url) {
-    url = normalizeHost(url);
-    var bookId = getBookId(url);
-    if (!bookId) return null;
-
-    var detailUrl = HOST + "/book/" + bookId + "/";
-    var doc = null;
     var browser = Engine.newBrowser();
     try {
         browser.setUserAgent(UserAgent.android());
-        doc = browser.launch(detailUrl, 30000);
-        if (isCloudflare(doc)) { sleep(10000); doc = browser.launch(detailUrl, 30000); }
-        if (isCloudflare(doc)) { sleep(15000); doc = browser.launch(detailUrl, 30000); }
-    } catch (e) { Console.log("detail error: " + e); }
-    try { browser.close(); } catch (e2) {}
-
-    if (!doc || isCloudflare(doc)) {
-        try {
-            var resp = fetch(detailUrl, { headers: { "user-agent": UserAgent.android(), "referer": HOST + "/" } });
-            if (resp.ok) { var fd = resp.html(); if (!isCloudflare(fd)) doc = fd; }
-        } catch (e3) {}
+        var doc = browser.launch(url, 25000);
+        if (isBlocked(doc)) {
+            sleep(4000);
+            doc = browser.launch(url, 25000);
+        }
+        return isBlocked(doc) ? null : doc;
+    } catch (e) {
+        Console.log("kudushu detail: " + e);
+        return null;
+    } finally {
+        try { browser.close(); } catch (ignore2) {}
     }
-    if (!doc || isCloudflare(doc)) return null;
+}
 
-    var title = doc.select(".cataloginfo h3").text().trim();
-    if (!title) title = doc.select("h1").text().trim();
-    if (!title) title = doc.select("meta[property='og:title']").attr("content") || "";
+function firstText(doc, selector) {
+    var element = doc.select(selector).first();
+    return element ? cleanText(element.text()) : "";
+}
 
-    var cover = doc.select(".infohead .pic img").attr("src") || "";
-    if (!cover) cover = doc.select("meta[property='og:image']").attr("content") || "";
-    cover = normalizeUrl(cover);
+function firstAttr(doc, selector, attr) {
+    var element = doc.select(selector).first();
+    return element ? cleanText(element.attr(attr)) : "";
+}
 
-    var author = doc.select("meta[property='og:novel:author']").attr("content") || "";
-    if (!author) author = extractInfoText(doc, "作者");
+function valueAfterLabel(value, label) {
+    value = cleanText(value);
+    if (value.indexOf(label) !== 0) return "";
+    return value.substring(label.length).replace(/^[：:\s]+/, "").trim();
+}
 
-    var type = extractInfoText(doc, "类型");
-    var updateTime = extractInfoText(doc, "更新时间");
-    var latest = "";
-    var latestEl = doc.select(".infotype p a").first();
-    if (latestEl) latest = latestEl.text().trim();
+function infoValue(doc, labels) {
+    var result = "";
+    doc.select(".infotype p, .book-info p, .info p, .cataloginfo p, .infotype li").forEach(function(element) {
+        if (result) return;
+        var text = cleanText(element.text());
+        for (var i = 0; i < labels.length; i++) {
+            var value = valueAfterLabel(text, labels[i]);
+            if (value) {
+                result = value;
+                return;
+            }
+        }
+    });
+    return result;
+}
 
-    var desc = doc.select(".intro p").text().replace(/\s+/g, " ").trim();
-    if (!desc) desc = doc.select("meta[name='description']").attr("content") || "";
+function execute(url) {
+    var bookId = getBookId(url);
+    if (!bookId) return null;
 
-    var status = doc.select("meta[property='og:novel:status']").attr("content") || "";
-    var ongoing = true;
-    if (status.indexOf("完结") !== -1 || status.indexOf("完本") !== -1) ongoing = false;
+    var doc = loadDoc(HOST + "/book/" + bookId + "/");
+    if (!doc) return null;
 
-    var detailParts = [];
-    if (author) detailParts.push("Tac gia: " + author);
-    if (type) detailParts.push("The loai: " + type);
-    if (updateTime) detailParts.push("Cap nhat: " + updateTime);
-    if (latest) detailParts.push("Moi nhat: " + latest);
+    var title = firstText(doc, ".cataloginfo h3, .book-info h1, .book-title h1, h1");
+    if (!title) title = firstAttr(doc, "meta[property='og:title']", "content");
+    title = title.replace(/(?:全文阅读|[-_|]\s*苦读书).*$/, "").trim();
+
+    var author = firstAttr(doc, "meta[property='og:novel:author']", "content");
+    if (!author) author = infoValue(doc, ["作者", "作者："]);
+
+    var type = firstAttr(doc, "meta[property='og:novel:category']", "content");
+    if (!type) type = infoValue(doc, ["类型", "分类"]);
+
+    var updated = firstAttr(doc, "meta[property='og:novel:update_time']", "content");
+    if (!updated) updated = infoValue(doc, ["更新时间", "更新"]);
+
+    var latest = infoValue(doc, ["最新章节", "最新章"]);
+    if (!latest) latest = firstText(doc, ".infotype p a, .latest a");
+
+    var cover = firstAttr(doc, ".infohead .pic img, .bookcover img, .cover img, img[src*='/files/article/image/']", "data-src");
+    if (!cover) cover = firstAttr(doc, ".infohead .pic img, .bookcover img, .cover img, img[src*='/files/article/image/']", "src");
+    if (!cover) cover = firstAttr(doc, "meta[property='og:image']", "content");
+    cover = cover ? toUrl(cover) : buildCover(bookId);
+
+    var description = firstText(doc, ".intro p, .intro, .description, #intro, [class*='summary']");
+    description = description.replace(/^(?:本书简介|简介)[：:]?\s*/, "");
+    if (!description) description = firstAttr(doc, "meta[name='description']", "content");
+
+    var status = firstAttr(doc, "meta[property='og:novel:status']", "content");
+    if (!status) status = infoValue(doc, ["状态"]);
+    var ongoing = !/(?:完结|完本|已完)/.test(status);
+
+    var detail = [];
+    if (author) detail.push("Tác giả: " + author);
+    if (type) detail.push("Thể loại: " + type);
+    detail.push("Trạng thái: " + (ongoing ? "Đang ra" : "Hoàn thành"));
+    if (updated) detail.push("Cập nhật: " + updated);
+    if (latest) detail.push("Mới nhất: " + latest);
 
     return Response.success({
-        name: title, cover: cover, author: author,
-        description: desc || title, detail: detailParts.join("<br>"),
-        ongoing: ongoing, host: HOST
+        name: title || "Kudushu",
+        cover: cover,
+        author: author,
+        description: description || title,
+        detail: detail.join("<br>"),
+        ongoing: ongoing,
+        host: HOST
     });
 }

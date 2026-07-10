@@ -1,148 +1,119 @@
 var HOST = "https://m.kudushu.org";
+var COVER_HOST = "https://www.kudushu.org";
 
-function normalizeUrl(link) {
+function cleanText(value) {
+    return (value || "").replace(/\s+/g, " ").trim();
+}
+
+function toUrl(link) {
+    link = cleanText(link);
     if (!link) return "";
     if (link.indexOf("//") === 0) return "https:" + link;
-    if (link.indexOf("http") === 0) return link;
-    if (link.indexOf("/") === 0) return HOST + link;
-    return HOST + "/" + link;
+    if (/^https?:/i.test(link)) return link.replace(/^http:\/\//i, "https://");
+    return HOST + (link.charAt(0) === "/" ? link : "/" + link);
 }
 
-function extractBookId(href) {
-    var m = href.match(/\/html\/(\d+)\//);
-    if (m) return m[1];
-    var m2 = href.match(/\/book\/(\d+)/);
-    if (m2) return m2[1];
-    return "";
+function getBookId(url) {
+    var match = String(url || "").match(/\/(?:book|html)\/(\d+)/i);
+    return match ? match[1] : "";
 }
 
-function isCloudflare(doc) {
+function buildCover(bookId) {
+    var id = parseInt(bookId, 10);
+    if (isNaN(id)) return "";
+    return COVER_HOST + "/files/article/image/" + Math.floor(id / 1000) + "/" + id + "/" + id + "s.jpg";
+}
+
+function isBlocked(doc) {
     if (!doc) return true;
     var text = doc.text() || "";
-    if (text.indexOf("Just a moment") !== -1) return true;
-    if (text.indexOf("cf_chl") !== -1) return true;
-    if (text.indexOf("Checking your browser") !== -1) return true;
-    if (text.indexOf("Enable JavaScript and cookies") !== -1) return true;
-    return false;
+    return /Just a moment|Checking your browser|Enable JavaScript and cookies|cf[-_]chl|challenges\.cloudflare\.com/i.test(text);
 }
 
 function loadDoc(url) {
-    var browser = Engine.newBrowser();
-    try {
-        browser.setUserAgent(UserAgent.android());
-        var doc = browser.launch(url, 30000);
-
-        if (isCloudflare(doc)) {
-            sleep(10000);
-            doc = browser.launch(url, 30000);
-        }
-        if (isCloudflare(doc)) {
-            sleep(15000);
-            doc = browser.launch(url, 30000);
-        }
-
-        if (doc && !isCloudflare(doc)) {
-            browser.close();
-            return doc;
-        }
-    } catch (e) {
-        Console.log("search browser error: " + e);
-    }
-    try { browser.close(); } catch (e2) {}
-
     try {
         var response = fetch(url, {
             headers: {
                 "user-agent": UserAgent.android(),
-                "referer": HOST + "/"
+                "referer": HOST + "/",
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "accept-language": "zh-CN,zh;q=0.9"
             }
         });
-        if (response.ok) {
-            var fdoc = response.html();
-            if (!isCloudflare(fdoc)) return fdoc;
+        if (response && response.ok) {
+            var fetched = response.html();
+            if (!isBlocked(fetched)) return fetched;
         }
-    } catch (e3) {}
+    } catch (ignore) {}
 
-    return null;
+    var browser = Engine.newBrowser();
+    try {
+        browser.setUserAgent(UserAgent.android());
+        var doc = browser.launch(url, 25000);
+        if (isBlocked(doc)) {
+            sleep(4000);
+            doc = browser.launch(url, 25000);
+        }
+        return isBlocked(doc) ? null : doc;
+    } catch (e) {
+        Console.log("kudushu search: " + e);
+        return null;
+    } finally {
+        try { browser.close(); } catch (ignore2) {}
+    }
 }
 
-function execute(key, page) {
-    if (!key) return Response.success([]);
-    var searchUrl = HOST + "/modules/article/search.php?searchkey=" + encodeURIComponent(key);
+function addResult(anchor, container, data, seen) {
+    var href = anchor.attr("href") || "";
+    var bookId = getBookId(href);
+    var title = cleanText(anchor.text());
+    var link = bookId ? HOST + "/book/" + bookId + "/" : "";
+    if (!bookId || !title || title.length < 2 || seen[link]) return;
 
-    var doc = loadDoc(searchUrl);
-    if (!doc) return null;
+    var description = "";
+    if (container) {
+        var authorElement = container.select(".author, .p3, [class*='author']").first();
+        var typeElement = container.select(".p1, .category, .type").first();
+        var author = authorElement ? cleanText(authorElement.text()).replace(/^作者[：:]\s*/, "") : "";
+        var type = typeElement ? cleanText(typeElement.text()).replace(/[\[\]]/g, "") : "";
+        var parts = [];
+        if (type) parts.push(type);
+        if (author) parts.push(author);
+        description = parts.join(" - ");
+    }
+
+    seen[link] = true;
+    data.push({
+        name: title,
+        link: link,
+        host: HOST,
+        cover: buildCover(bookId),
+        description: description
+    });
+}
+
+function execute(key) {
+    key = cleanText(key);
+    if (!key) return Response.success([]);
+
+    var doc = loadDoc(HOST + "/modules/article/search.php?searchkey=" + encodeURIComponent(key));
+    if (!doc) return Response.success([]);
 
     var data = [];
     var seen = {};
-
-    // Strategy 1: searchresult links
-    doc.select(".searchresult a[href*='/html/']").forEach(function(a) {
-        var href = a.attr("href") || "";
-        var bookId = extractBookId(href);
-        if (!bookId) return;
-
-        var title = (a.text() || "").replace(/\s+/g, " ").trim();
-        if (!title) return;
-
-        var link = HOST + "/book/" + bookId + "/";
-        if (seen[link]) return;
-        seen[link] = true;
-
-        data.push({
-            name: title,
-            link: link,
-            host: HOST,
-            cover: "",
-            description: ""
-        });
+    doc.select(".searchresult, .articlegeneral, .article, .bookbox, .list-item").forEach(function(item) {
+        var anchor = item.select("h1 a, h2 a, h3 a, h4 a, h5 a, h6 a, .bookname a, .p2 a").first();
+        if (!anchor || !getBookId(anchor.attr("href") || "")) {
+            item.select("a[href*='/book/'], a[href*='/html/']").forEach(function(a) {
+                if (!anchor && getBookId(a.attr("href") || "")) anchor = a;
+            });
+        }
+        if (anchor) addResult(anchor, item, data, seen);
     });
 
-    // Strategy 2: any html links
-    if (data.length === 0) {
-        doc.select("a[href*='/html/']").forEach(function(a) {
-            var href = a.attr("href") || "";
-            var bookId = extractBookId(href);
-            if (!bookId) return;
-
-            var title = (a.text() || "").replace(/\s+/g, " ").trim();
-            if (!title || title.length < 2) return;
-
-            var link = HOST + "/book/" + bookId + "/";
-            if (seen[link]) return;
-            seen[link] = true;
-
-            data.push({
-                name: title,
-                link: link,
-                host: HOST,
-                cover: "",
-                description: ""
-            });
-        });
-    }
-
-    // Strategy 3: any book links
-    if (data.length === 0) {
-        doc.select("a[href*='/book/']").forEach(function(a) {
-            var href = a.attr("href") || "";
-            var bookId = extractBookId(href);
-            if (!bookId) return;
-
-            var title = (a.text() || "").replace(/\s+/g, " ").trim();
-            if (!title || title.length < 2) return;
-
-            var link = HOST + "/book/" + bookId + "/";
-            if (seen[link]) return;
-            seen[link] = true;
-
-            data.push({
-                name: title,
-                link: link,
-                host: HOST,
-                cover: "",
-                description: ""
-            });
+    if (!data.length) {
+        doc.select("a[href*='/book/'], a[href*='/html/']").forEach(function(anchor) {
+            addResult(anchor, null, data, seen);
         });
     }
 

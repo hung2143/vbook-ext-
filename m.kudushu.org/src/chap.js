@@ -1,32 +1,28 @@
 var HOST = "https://m.kudushu.org";
 
-function normalizeUrl(link) {
-    if (!link) return "";
-    if (link.indexOf("//") === 0) return "https:" + link;
-    if (link.indexOf("http") === 0) return link;
-    if (link.indexOf("/") === 0) return HOST + link;
-    return HOST + "/" + link;
+function cleanText(value) {
+    return (value || "").replace(/\s+/g, " ").trim();
 }
 
-function isCloudflare(doc) {
+function toUrl(link, baseUrl) {
+    link = cleanText(link);
+    if (!link || /^javascript:|^#/i.test(link)) return "";
+    if (link.indexOf("//") === 0) return "https:" + link;
+    if (/^https?:/i.test(link)) return link.replace(/^http:\/\//i, "https://");
+    if (link.charAt(0) === "/") return HOST + link;
+    baseUrl = (baseUrl || HOST + "/").replace(/[?#].*$/, "");
+    return baseUrl.substring(0, baseUrl.lastIndexOf("/") + 1) + link;
+}
+
+function isBlocked(doc) {
     if (!doc) return true;
     var text = doc.text() || "";
-    return text.indexOf("Just a moment") !== -1 || text.indexOf("Enable JavaScript and cookies") !== -1;
+    return /Just a moment|Checking your browser|Enable JavaScript and cookies|cf[-_]chl|challenges\.cloudflare\.com/i.test(text);
 }
 
-function browserLoad(url, referer) {
-    var browser = Engine.newBrowser();
+function loadDoc(url, referer) {
     try {
-        browser.setUserAgent(UserAgent.android());
-        var doc = browser.launch(url, 30000);
-        if (isCloudflare(doc)) { sleep(10000); doc = browser.launch(url, 30000); }
-        if (isCloudflare(doc)) { sleep(15000); doc = browser.launch(url, 30000); }
-        if (doc && !isCloudflare(doc)) { browser.close(); return doc; }
-    } catch (e) { Console.log("chap browser error: " + e); }
-    try { browser.close(); } catch (e2) {}
-
-    try {
-        var resp = fetch(url, {
+        var response = fetch(url, {
             headers: {
                 "user-agent": UserAgent.android(),
                 "referer": referer || HOST + "/",
@@ -34,64 +30,88 @@ function browserLoad(url, referer) {
                 "accept-language": "zh-CN,zh;q=0.9"
             }
         });
-        if (resp.ok) { var fd = resp.html(); if (!isCloudflare(fd)) return fd; }
-    } catch (e3) {}
-    return null;
+        if (response && response.ok) {
+            var fetched = response.html();
+            if (!isBlocked(fetched)) return fetched;
+        }
+    } catch (ignore) {}
+
+    var browser = Engine.newBrowser();
+    try {
+        browser.setUserAgent(UserAgent.android());
+        var doc = browser.launch(url, 25000);
+        if (isBlocked(doc)) {
+            sleep(4000);
+            doc = browser.launch(url, 25000);
+        }
+        return isBlocked(doc) ? null : doc;
+    } catch (e) {
+        Console.log("kudushu chapter: " + e);
+        return null;
+    } finally {
+        try { browser.close(); } catch (ignore2) {}
+    }
 }
 
 function cleanContent(html) {
     if (!html) return "";
-    html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
-    html = html.replace(/<div[^>]*id=["']content_tip["'][^>]*>[\s\S]*?<\/div>/gi, "");
-    html = html.replace(/最新网址[^<]*m\.kudushu\.org/gi, "");
-    html = html.replace(/（本章未完[^)]*）/g, "");
-    html = html.replace(/第\d+章[^<]{0,80}\(第\d+\/\d+页\)/g, "");
-    html = html.replace(/&nbsp;/g, " ");
-    return html.trim();
+    return html
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/<div[^>]*(?:id|class)=["'][^"']*(?:content_tip|readtip|chapter-tip|tips)[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, "")
+        .replace(/(?:最新|最新网址)[^<]{0,100}(?:kudushu\.org)[^<]*/gi, "")
+        .replace(/（本章未完[^）]*）/g, "")
+        .replace(/\(本章未完[^)]*\)/g, "")
+        .replace(/&nbsp;/gi, " ")
+        .trim();
 }
 
-function findNextPage(doc, basePath) {
-    var nextHref = "";
-    doc.select("a").forEach(function(a) {
-        var text = (a.text() || "").replace(/\s+/g, "").trim();
-        if (text === "下—页" || text === "下一页" || text === "下页") {
-            nextHref = a.attr("href") || "";
-        }
+function chapterBase(url) {
+    var match = String(url || "").match(/(\/html\/\d+\/\d+)(?:_\d+)?\/?(?:[?#].*)?$/i);
+    return match ? match[1] : "";
+}
+
+function findNextPage(doc, currentUrl, basePath) {
+    var nextUrl = "";
+    doc.select("a[href]").forEach(function(a) {
+        if (nextUrl) return;
+        var label = cleanText(a.text()).replace(/\s/g, "");
+        var rel = (a.attr("rel") || "").toLowerCase();
+        if (label !== "下页" && label !== "下一页" && label !== "下一頁" && label !== "»" && rel !== "next") return;
+
+        var candidate = toUrl(a.attr("href") || "", currentUrl).replace(/[?#].*$/, "");
+        if (candidate.indexOf(HOST + basePath + "_") === 0) nextUrl = candidate;
     });
-    if (!nextHref) return "";
-    if (nextHref.indexOf(basePath + "_") === -1) return "";
-    return normalizeUrl(nextHref);
+    return nextUrl;
 }
 
 function execute(url) {
-    if (!url) return null;
-    if (url.indexOf("http") !== 0) url = HOST + url;
+    var firstUrl = toUrl(url);
+    var basePath = chapterBase(firstUrl);
+    if (!basePath) return null;
 
-    var baseMatch = url.match(/(\/html\/\d+\/\d+)/);
-    if (!baseMatch) return null;
-    var basePath = baseMatch[1];
-
-    var fullContent = "";
-    var currentUrl = url;
+    var currentUrl = firstUrl;
+    var content = "";
+    var seen = {};
     var guard = 0;
 
-    while (currentUrl && guard < 20) {
+    while (currentUrl && !seen[currentUrl] && guard < 20) {
+        seen[currentUrl] = true;
         guard++;
-        var doc = browserLoad(currentUrl, url);
+
+        var doc = loadDoc(currentUrl, firstUrl);
         if (!doc) break;
 
-        var contentEl = doc.select("#novelcontent, .novelcontent").first();
-        var html = contentEl ? contentEl.html() : "";
-        html = cleanContent(html);
-        if (html) fullContent += html;
+        var contentElement = doc.select("#novelcontent, .novelcontent, #chaptercontent, .chapter-content").first();
+        var html = contentElement ? cleanContent(contentElement.html()) : "";
+        if (!html) break;
+        content += (content ? "<br><br>" : "") + html;
 
-        var nextUrl = findNextPage(doc, basePath);
+        var nextUrl = findNextPage(doc, currentUrl, basePath);
         if (!nextUrl) break;
-
-        sleep(3000);
+        sleep(800);
         currentUrl = nextUrl;
     }
 
-    if (!fullContent) return null;
-    return Response.success(fullContent);
+    return content ? Response.success(content) : null;
 }

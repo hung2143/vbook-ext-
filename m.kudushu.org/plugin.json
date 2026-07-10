@@ -2,11 +2,11 @@
   "metadata": {
     "name": "Kudushu",
     "author": "Hung",
-    "version": 4,
+    "version": 5,
     "source": "https://m.kudushu.org/",
     "icon": "icon.png",
-    "regexp": "(?:m\\.)?kudushu\\.org/(?:book/\\d+/?|html/\\d+/\\d+(?:_\\d+)?/?|html/\\d+/asc-\\d+/?)(?:\\?.*)?$",
-    "description": "Doc truyen tren trang m.kudushu.org",
+    "regexp": "https?://(?:m\\.|www\\.)?kudushu\\.org/(?:book/\\d+/?|html/\\d+/(?:\\d+(?:_\\d+)?|asc-\\d+)/?)(?:\\?.*)?$",
+    "description": "Đọc truyện trên Khổ Đọc Sách (m.kudushu.org)",
     "locale": "zh_CN",
     "language": "javascript",
     "type": "chinese_novel"
