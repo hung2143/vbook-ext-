@@ -7,6 +7,7 @@ var MODE_GROUPS = {
     reads: ["1501", "1505", "1504", "1523", "1524", "1516"],
     score: ["1501", "1505", "1504", "1523", "1524", "1516"],
     updated: ["1501", "1505", "1504", "1523", "1524", "1516"],
+    updated_all: ["1501", "1502", "1503", "1504", "1505", "1506", "1507", "1508", "1509", "1510", "1511", "1512", "1515", "1516", "1517", "1518", "1519", "1520", "1522", "1523", "1524"],
     finished: ["1501", "1505", "1504", "1523", "1524", "1516"]
 };
 
@@ -35,7 +36,7 @@ function fetchGroup(groupId, page) {
 }
 
 function compareBooks(mode, left, right) {
-    if (mode === "updated" || mode === "finished") {
+    if (mode === "updated" || mode === "updated_all" || mode === "finished") {
         return toNumber(right.lastUpdatetime) - toNumber(left.lastUpdatetime);
     }
 
@@ -61,7 +62,8 @@ function buildDescription(book) {
 
 function execute(input, page) {
     var mode = getParam(input, "mode") || "reads";
-    var groups = MODE_GROUPS[mode] || MODE_GROUPS.reads;
+    var groupId = getParam(input, "groupid");
+    var groups = groupId ? [groupId] : (MODE_GROUPS[mode] || MODE_GROUPS.reads);
     var pageNumber = parseInt(page || "1", 10);
     if (isNaN(pageNumber) || pageNumber < 1) pageNumber = 1;
 

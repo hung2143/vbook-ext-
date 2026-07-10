@@ -3,11 +3,12 @@ function execute() {
     // Đề xuất cá nhân hoá của QQ Browser không công khai, nên "精选" được xếp theo
     // điểm và lượt đọc của các nhóm truyện lớn thay vì giả lập một feed đăng nhập.
     return Response.success([
+        { title: "全站・最新更新", input: "mode=updated_all", script: "feed.js" },
+        { title: "BXH・最新更新", input: "mode=updated", script: "feed.js" },
         { title: "精选推荐・男频", input: "mode=recommend_male", script: "feed.js" },
         { title: "精选推荐・女频", input: "mode=recommend_female", script: "feed.js" },
         { title: "全站・热门阅读", input: "mode=reads", script: "feed.js" },
         { title: "全站・高分作品", input: "mode=score", script: "feed.js" },
-        { title: "全站・最新更新", input: "mode=updated", script: "feed.js" },
         { title: "全站・完本精选", input: "mode=finished", script: "feed.js" },
         { title: "男频・玄幻热门", input: "groupid=1501&start={{page}}&count=20&sort=0&sub=&tag=&words=&finish=", script: "gen.js" },
         { title: "男频・都市热门", input: "groupid=1505&start={{page}}&count=20&sort=0&sub=&tag=&words=&finish=", script: "gen.js" },
