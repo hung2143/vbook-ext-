@@ -4,15 +4,30 @@ var BROWSER_TIMEOUT = 12000;
 
 var GENRE_IDS = {
     "玄幻魔法": 1,
+    "玄幻奇幻": 1,
+    "玄幻": 1,
     "武侠修真": 2,
+    "武侠仙侠": 2,
+    "仙侠修真": 2,
     "都市言情": 3,
+    "都市小说": 3,
+    "都市": 3,
     "历史军事": 4,
+    "历史": 4,
+    "军事": 4,
     "侦探推理": 5,
     "网游动漫": 6,
+    "游戏竞技": 6,
     "科幻小说": 7,
+    "科幻": 7,
     "恐怖灵异": 8,
+    "灵异": 8,
     "言情小说": 9,
+    "古代言情": 9,
+    "现代言情": 9,
+    "言情": 9,
     "其他类型": 10,
+    "其它类型": 10,
     "经部": 11,
     "史书": 12,
     "子部": 13,
@@ -186,23 +201,70 @@ function extractDescription(doc) {
     return cleanDescription(description);
 }
 
-function buildGenres(category) {
-    var result = [];
-    var seen = {};
+function genreId(title) {
+    return GENRE_IDS[cleanText(title)] || 0;
+}
 
-    cleanText(category).split(/[、,，/|]+/).forEach(function(value) {
-        var title = cleanText(value);
-        var id = GENRE_IDS[title];
-        if (!title || !id || seen[id]) return;
-        seen[id] = true;
-        result.push({
-            title: title,
-            input: HOST + "/sort/" + id + "/1.html",
-            script: "book.js"
+function genreIdFromHref(href) {
+    var match = String(href || "").match(/\/sort\/(\d+)\//i);
+    if (!match) match = String(href || "").match(/[?&]sortid=(\d+)/i);
+    var id = match ? parseInt(match[1], 10) : 0;
+    return id >= 1 && id <= 18 ? id : 0;
+}
+
+function categoryEntry(title, href) {
+    title = cleanText(title);
+    var id = genreIdFromHref(href) || genreId(title);
+    return title && id ? { title: title, id: id } : null;
+}
+
+function extractCategory(doc) {
+    var selectors = [".infotype p", ".book-info p", ".info p", ".cataloginfo p", ".infotype li"];
+
+    for (var i = 0; i < selectors.length; i++) {
+        var found = null;
+        doc.select(selectors[i]).forEach(function(element) {
+            if (found) return;
+
+            var text = cleanText(element.text());
+            if (!/^(?:类型|分类|分類)[：:]/.test(text)) return;
+
+            element.select("a[href]").forEach(function(anchor) {
+                if (!found) found = categoryEntry(anchor.text(), anchor.attr("href"));
+            });
+
+            if (!found) {
+                found = categoryEntry(text.replace(/^(?:类型|分类|分類)[：:]\s*/, ""), "");
+            }
         });
-    });
+        if (found) return found;
+    }
 
-    return result;
+    // Có template đặt link thể loại ngoài dòng thông tin nhưng vẫn dùng URL /sort/{id}/.
+    var linkSelectors = [
+        ".infotype a[href*='/sort/']", ".book-info a[href*='/sort/']",
+        ".info a[href*='/sort/']", ".cataloginfo a[href*='/sort/']"
+    ];
+    for (var j = 0; j < linkSelectors.length; j++) {
+        var linkedCategory = null;
+        doc.select(linkSelectors[j]).forEach(function(anchor) {
+            if (!linkedCategory) linkedCategory = categoryEntry(anchor.text(), anchor.attr("href"));
+        });
+        if (linkedCategory) return linkedCategory;
+    }
+
+    // Chỉ dùng metadata khi nó khớp danh mục hợp lệ. Kudushu đôi khi ghi nhầm
+    // tiêu đề chương mới nhất vào og:novel:category.
+    return categoryEntry(firstAttr(doc, "meta[property='og:novel:category']", "content"), "");
+}
+
+function buildGenres(category) {
+    if (!category || !category.title || !category.id) return [];
+    return [{
+        title: category.title,
+        input: HOST + "/sort/" + category.id + "/1.html",
+        script: "book.js"
+    }];
 }
 
 function execute(url) {
@@ -217,8 +279,8 @@ function execute(url) {
     var author = firstAttr(doc, "meta[property='og:novel:author']", "content");
     if (!author) author = infoValue(doc, ["作者", "作者："]);
 
-    var type = firstAttr(doc, "meta[property='og:novel:category']", "content");
-    if (!type) type = infoValue(doc, ["类型", "分类"]);
+    var category = extractCategory(doc);
+    var type = category ? category.title : "";
 
     var updated = firstAttr(doc, "meta[property='og:novel:update_time']", "content");
     if (!updated) updated = infoValue(doc, ["更新时间", "更新"]);
@@ -251,7 +313,7 @@ function execute(url) {
         description: description || title,
         detail: detail.join("<br>"),
         ongoing: ongoing,
-        genres: buildGenres(type),
+        genres: buildGenres(category),
         host: HOST
     });
 }
