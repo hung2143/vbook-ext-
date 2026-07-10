@@ -2,9 +2,10 @@ var API_HOST = "https://bookshelf.html5.qq.com";
 var GRAPHQL_API = "https://novel.html5.qq.com/be-api/gql";
 var RANK_API = API_HOST + "/qbread/api/rank/list";
 var GROUPS_PER_LOAD = 2;
-var GRAPHQL_GROUP_BATCH_SIZE = 6;
+var GRAPHQL_RETRY_BATCH_SIZE = 6;
 var NEWEST_SCAN_SIZE = 10000;
 var PAGE_SIZE = 20;
+var TOKEN_PAGE_COUNT = 10;
 
 var MODE_GROUPS = {
     recommend_male: ["1501", "1505", "1504", "1512"],
@@ -66,27 +67,29 @@ function scanGroupBatch(groups, newestById) {
     var after = 0;
 
     while (pending.length) {
-        var query = "query{groups(param:{cond:[" + buildGroupConditions(pending, after) + "]})" +
-            "{info{books{bookBaseInfo{id lastUpdateTime}}}}}";
+        // Alias ngắn giảm hơn một nửa JSON phải tải và parse: groups/info/books/
+        // bookBaseInfo/id/lastUpdateTime -> g/i/b/x/i/t.
+        var query = "query{g:groups(param:{cond:[" + buildGroupConditions(pending, after) + "]})" +
+            "{i:info{b:books{x:bookBaseInfo{i:id t:lastUpdateTime}}}}}";
         var data = postGraphQL(query);
-        if (!data || !Array.isArray(data.groups)) return false;
+        if (!data || !Array.isArray(data.g)) return false;
 
         var nextPending = [];
         pending.forEach(function(groupId, groupIndex) {
-            var group = data.groups[groupIndex] || {};
-            var infoList = Array.isArray(group.info) ? group.info : [];
+            var group = data.g[groupIndex] || {};
+            var infoList = Array.isArray(group.i) ? group.i : [];
             var count = 0;
 
             infoList.forEach(function(info) {
-                var books = info && Array.isArray(info.books) ? info.books : [];
+                var books = info && Array.isArray(info.b) ? info.b : [];
                 count += books.length;
 
                 books.forEach(function(item) {
-                    var baseInfo = item && item.bookBaseInfo;
-                    var bookId = baseInfo && String(baseInfo.id || "");
+                    var baseInfo = item && item.x;
+                    var bookId = baseInfo && String(baseInfo.i || "");
                     if (!bookId) return;
 
-                    var updateTime = toNumber(baseInfo.lastUpdateTime);
+                    var updateTime = toNumber(baseInfo.t);
                     if (!newestById[bookId] || updateTime > newestById[bookId].lastUpdateTime) {
                         newestById[bookId] = {
                             id: bookId,
@@ -113,14 +116,13 @@ function scanNewestBooks(groups) {
     if (!groups.length) return [];
 
     var newestById = {};
-    for (var index = 0; index < groups.length; index += GRAPHQL_GROUP_BATCH_SIZE) {
-        var batch = groups.slice(index, index + GRAPHQL_GROUP_BATCH_SIZE);
-        if (scanGroupBatch(batch, newestById)) continue;
-
-        // Nếu một cụm lớn lỗi tạm thời, thử lại từng thể loại để không làm hỏng
-        // toàn bộ danh sách cập nhật.
-        for (var retryIndex = 0; retryIndex < batch.length; retryIndex++) {
-            if (!scanGroupBatch([batch[retryIndex]], newestById)) return null;
+    // Gộp các thể loại vào một request để tránh 4 lượt chờ nối tiếp. Nếu máy
+    // chủ từ chối response lớn, tự hạ xuống các cụm nhỏ và thử lại.
+    if (!scanGroupBatch(groups, newestById)) {
+        newestById = {};
+        for (var index = 0; index < groups.length; index += GRAPHQL_RETRY_BATCH_SIZE) {
+            var batch = groups.slice(index, index + GRAPHQL_RETRY_BATCH_SIZE);
+            if (!scanGroupBatch(batch, newestById)) return null;
         }
     }
 
@@ -177,15 +179,59 @@ function compareNewest(left, right) {
     return String(right.id).localeCompare(String(left.id));
 }
 
-function fetchNewestPage(groups, pageNumber) {
-    var newestBooks = scanNewestBooks(groups);
-    if (newestBooks === null) return null;
+function encodeNewestToken(pageNumber, hasMore, books) {
+    var values = books.map(function(book) {
+        return String(book.id) + "." + String(toNumber(book.lastUpdateTime));
+    }).join(",");
+    return "n;" + pageNumber + ";" + (hasMore ? "1" : "0") + ";" + values;
+}
 
-    newestBooks.sort(compareNewest);
-    var start = (pageNumber - 1) * PAGE_SIZE;
-    var selected = newestBooks.slice(start, start + PAGE_SIZE);
+function decodeNewestToken(value) {
+    var match = String(value || "").match(/^n;(\d+);([01]);(.*)$/);
+    if (!match) return null;
+
+    var books = [];
+    String(match[3] || "").split(",").forEach(function(item) {
+        var parts = item.split(".");
+        if (!/^\d+$/.test(parts[0] || "") || !/^\d+$/.test(parts[1] || "")) return;
+        books.push({ id: parts[0], lastUpdateTime: toNumber(parts[1]) });
+    });
+
+    return {
+        pageNumber: parseInt(match[1], 10),
+        hasMore: match[2] === "1",
+        books: books
+    };
+}
+
+function fetchNewestPage(groups, pageValue) {
+    var token = decodeNewestToken(pageValue);
+    var pageNumber = token ? token.pageNumber : parseInt(pageValue || "1", 10);
+    if (isNaN(pageNumber) || pageNumber < 1) pageNumber = 1;
+
+    var selected;
+    var remaining;
+    var hasMore;
+
+    if (token) {
+        selected = token.books.slice(0, PAGE_SIZE);
+        remaining = token.books.slice(PAGE_SIZE);
+        hasMore = token.hasMore;
+    } else {
+        var newestBooks = scanNewestBooks(groups);
+        if (newestBooks === null) return null;
+
+        newestBooks.sort(compareNewest);
+        var start = (pageNumber - 1) * PAGE_SIZE;
+        var windowEnd = start + PAGE_SIZE * TOKEN_PAGE_COUNT;
+        var windowBooks = newestBooks.slice(start, windowEnd);
+        selected = windowBooks.slice(0, PAGE_SIZE);
+        remaining = windowBooks.slice(PAGE_SIZE);
+        hasMore = windowEnd < newestBooks.length;
+    }
+
     if (!selected.length) {
-        return { data: [], hasNext: false };
+        return { data: [], next: null };
     }
 
     var details = fetchBooksByIds(selected.map(function(book) { return book.id; }));
@@ -207,9 +253,19 @@ function fetchNewestPage(groups, pageNumber) {
     });
 
     if (!orderedBooks.length && selected.length) return null;
+
+    var next = null;
+    if (remaining.length) {
+        next = encodeNewestToken(pageNumber + 1, hasMore, remaining);
+    } else if (hasMore) {
+        // Sau mười trang mới cần quét lại; thao tác cuộn thông thường chỉ gọi
+        // request chi tiết 20 truyện và không tải lại toàn bộ chỉ mục.
+        next = String(pageNumber + 1);
+    }
+
     return {
         data: booksToData(orderedBooks),
-        hasNext: start + selected.length < newestBooks.length
+        next: next
     };
 }
 
@@ -324,12 +380,9 @@ function execute(input, page) {
     if (isNaN(pageNumber) || pageNumber < 1) pageNumber = 1;
 
     if (mode === "updated" || mode === "updated_all") {
-        var newestPage = fetchNewestPage(groups, pageNumber);
+        var newestPage = fetchNewestPage(groups, page || "1");
         if (newestPage !== null) {
-            return Response.success(
-                newestPage.data,
-                newestPage.hasNext ? String(pageNumber + 1) : null
-            );
+            return Response.success(newestPage.data, newestPage.next);
         }
 
         // Không gắn nhãn danh sách phổ biến của API cũ thành "mới cập nhật".
