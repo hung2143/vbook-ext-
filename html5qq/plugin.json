@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "name": "QQ阅读 HTML5",
+    "author": "Moleys",
+    "version": 9,
+    "source": "https://bookshelf.html5.qq.com/qbread/categorylist?ch=001995&groupid=1501",
+    "icon": "icon.png",
+    "regexp": "https?://(?:bookshelf|novel)\\.html5\\.qq\\.com/(?:qbread/intro|autojump/intro|portal/novel-intro)(?:[/?].*)?",
+    "description": "Đọc truyện trên QQ阅读 HTML5",
+    "locale": "zh_CN",
+    "language": "javascript",
+    "type": "chinese_novel"
+  },
+  "script": {
+    "home": "home.js",
+    "detail": "detail.js",
+    "toc": "toc.js",
+    "genre": "genre.js",
+    "search": "search.js",
+    "chap": "chap2.js"
+  }
+}
