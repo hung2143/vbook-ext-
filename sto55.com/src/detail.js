@@ -57,6 +57,9 @@ function fetchWithRetry(url) {
 
 function cleanDescription(value) {
     return (value || "")
+        .replace(/<br\s*\/?\s*>/gi, " ")
+        .replace(/&(?:emsp|nbsp);/gi, " ")
+        .replace(/<[^>]+>/g, " ")
         .replace(/^\s*(?:簡介|简介)[：:]\s*/, "")
         .replace(/\s+/g, " ")
         .trim();
@@ -131,7 +134,25 @@ function fetchDescFromSto55(bookName, bookId) {
     return "";
 }
 
-function fetchDescFromSto9(bookName) {
+function emptyBookMetadata() {
+    return {
+        name: "",
+        author: "",
+        category: "",
+        status: "",
+        wordCount: "",
+        updated: "",
+        description: ""
+    };
+}
+
+function valueAfterLabel(value, labelPattern) {
+    var match = (value || "").trim().match(labelPattern);
+    return match ? match[1].trim() : "";
+}
+
+function fetchMetadataFromSto9(bookName) {
+    var metadata = emptyBookMetadata();
     try {
         var searchUrl = METADATA_HOST + "/search/" + encodeURIComponent(bookName) + "/1.html";
         var response = fetch(searchUrl, {
@@ -142,34 +163,120 @@ function fetchDescFromSto9(bookName) {
                 "accept-language": "zh-CN,zh;q=0.9,en;q=0.8"
             }
         });
-        if (!response || !response.ok) return "";
+        if (!response || !response.ok) return metadata;
 
         var doc = response.html();
         var resultName = doc.select("meta[property='og:title']").attr("content") ||
             doc.select(".booknav2 h1").text();
-        if (normalizeBookName(resultName) !== normalizeBookName(bookName)) return "";
+        if (normalizeBookName(resultName) !== normalizeBookName(bookName)) return metadata;
 
-        var desc = doc.select("meta[property='og:description']").attr("content");
-        if (!desc) desc = doc.select("#tab_info .navtxt p").first().text();
-        return cleanDescription(desc);
+        metadata.name = resultName.trim();
+        metadata.author = (doc.select("meta[property='og:novel:author']").attr("content") || "").trim();
+        metadata.category = (doc.select("meta[property='og:novel:category']").attr("content") || "").trim();
+        metadata.status = (doc.select("meta[property='og:novel:status']").attr("content") || "").trim();
+        metadata.updated = (doc.select("meta[property='og:novel:update_time']").attr("content") || "").trim();
+        var descriptionEl = doc.select("#tab_info .navtxt p").first();
+        metadata.description = descriptionEl ? descriptionEl.text() : "";
+        if (!metadata.description) {
+            metadata.description = doc.select("meta[property='og:description']").attr("content") || "";
+        }
+        metadata.description = cleanDescription(metadata.description);
+
+        // Các dòng này có định dạng giống ảnh: 作者 / 分類 / 狀態 / 字數 / 更新.
+        doc.select(".booknav2 p").forEach(function(element) {
+            var text = element.text().trim();
+            var value = "";
+
+            value = valueAfterLabel(text, /^(?:作者)[：:]\s*(.+)$/);
+            if (value) metadata.author = value;
+
+            value = valueAfterLabel(text, /^(?:分類|分类)[：:]\s*(.+)$/);
+            if (value) metadata.category = value;
+
+            value = valueAfterLabel(text, /^(?:狀態|状态)[：:]\s*(.+)$/);
+            if (value) metadata.status = value;
+
+            value = valueAfterLabel(text, /^(?:字數|字数)[：:]\s*(.+)$/);
+            if (value) metadata.wordCount = value;
+
+            value = valueAfterLabel(text, /^(?:更新|更新時間|更新时间)[：:]\s*(.+)$/);
+            if (value) metadata.updated = value;
+        });
+
+        return metadata;
     } catch (e) {
-        Console.log("sto9 description fallback error: " + e);
-        return "";
+        Console.log("sto9 metadata fallback error: " + e);
+        return metadata;
     }
 }
 
 /**
- * Trang chi tiết sto55 để trống .bookintro. Mô tả đầy đủ nằm ở kết quả tìm kiếm;
- * sto9 (domain mới cùng hệ thống) được dùng làm nguồn dự phòng khi sto55 redirect.
+ * sto9 cung cấp đủ metadata trong trang sách. Nếu mô tả ở đó tạm thiếu thì lấy
+ * .bookbox .update của sto55 theo đúng bookId.
  */
-function fetchDescFromSearch(bookName, bookId) {
-    if (!bookName) return "";
+function fetchBookMetadata(bookName, bookId) {
+    if (!bookName) return emptyBookMetadata();
 
-    var desc = fetchDescFromSto55(bookName, bookId);
-    if (!desc) desc = fetchDescFromSto9(bookName);
+    var metadata = fetchMetadataFromSto9(bookName);
+    if (!metadata.description) metadata.description = fetchDescFromSto55(bookName, bookId);
 
-    Console.log("fetchDescFromSearch result: " + (desc ? desc.substring(0, 50) + "..." : "EMPTY"));
-    return desc;
+    Console.log("fetchBookMetadata result: " +
+        (metadata.description ? metadata.description.substring(0, 50) + "..." : "EMPTY"));
+    return metadata;
+}
+
+function escapeHtml(value) {
+    return (value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function buildIntroduction(bookName, author, description) {
+    var lines = [];
+    if (author) lines.push("作者：" + escapeHtml(author));
+    if (bookName) lines.push("作品：" + escapeHtml(bookName));
+
+    var intro = lines.join("<br>");
+    if (description) {
+        if (intro) intro += "<br><br>";
+        intro += escapeHtml(description);
+    }
+    return intro;
+}
+
+function buildGenres(category) {
+    if (!category) return [];
+
+    var categoryIds = {
+        "玄幻奇幻": 1,
+        "武俠仙俠": 2,
+        "武侠仙侠": 2,
+        "現代都市": 3,
+        "现代都市": 3,
+        "歷史軍事": 4,
+        "历史军事": 4,
+        "科幻小說": 5,
+        "科幻小说": 5,
+        "遊戲競技": 6,
+        "游戏竞技": 6,
+        "恐怖靈異": 7,
+        "恐怖灵异": 7,
+        "言情小說": 8,
+        "言情小说": 8,
+        "其他類型": 9,
+        "其他类型": 9
+    };
+    var categoryId = categoryIds[category];
+    var genre = { title: category };
+
+    if (categoryId) {
+        genre.input = HOST + "/shuku/0/" + categoryId + "/0/0/0/0/lastupdate/1.html";
+        genre.script = "book.js";
+    }
+    return [genre];
 }
 
 function execute(url) {
@@ -241,39 +348,51 @@ function execute(url) {
     if (descEl) {
         desc = descEl.text().trim();
     }
-    // meta description của sto55 chỉ là text SEO chung, không dùng được
-    // Lấy mô tả đầy đủ từ trang tìm kiếm (nơi duy nhất có giới thiệu truyện)
-    if (!desc && name) {
-        Console.log("No desc in detail page, fetching from search...");
-        desc = fetchDescFromSearch(name, bookId);
+    // Trang sto55 để trống .bookintro, nên lấy cả mô tả lẫn metadata từ sto9.
+    var remoteMetadata = fetchBookMetadata(name, bookId);
+    if (!desc) desc = remoteMetadata.description;
+    if (!author) author = remoteMetadata.author;
+
+    var statusMatch = bodyText.match(/(連載中|连载中|連載|连载|完結|完结|完本|全本)/);
+    var status = remoteMetadata.status || (statusMatch ? statusMatch[0] : "連載");
+    var ongoing = !/(完結|完结|完本|全本)/.test(status);
+
+    var category = remoteMetadata.category || "";
+    var catMatch = bodyText.match(/(?:分類|分类)[：:]\s*([^\s\n<]+)/);
+    if (!category && catMatch) category = catMatch[1].replace(/<[^>]+>/g, "").trim();
+    if (!category) {
+        var categoryEl = doc.select(".breadcrumb a[href*='/class_']").last();
+        if (categoryEl) category = categoryEl.text().trim();
     }
 
+    var wordCount = remoteMetadata.wordCount || "";
+    var wcMatch = bodyText.match(/([\d.]+\s*(?:萬|万)?字)/);
+    if (!wordCount && wcMatch) wordCount = wcMatch[0];
 
-    var statusMatch = bodyText.match(/(连载|完结|完結|连载中|完本)/);
-    var ongoing = !statusMatch || (statusMatch[0] !== "完结" && statusMatch[0] !== "完本" && statusMatch[0] !== "完結");
-
-    var category = "";
-    var catMatch = bodyText.match(/分类[：:]\s*([^\s\n<]+)/);
-    if (catMatch) category = catMatch[1].replace(/<[^>]+>/g, "").trim();
-
-    var wordCount = "";
-    var wcMatch = bodyText.match(/(\d+)\s*字/);
-    if (wcMatch) wordCount = wcMatch[0];
+    var updated = remoteMetadata.updated || "";
+    if (!updated) {
+        var updateText = doc.select(".booktime").text();
+        updated = valueAfterLabel(updateText, /^(?:更新時間|更新时间)[：:]\s*(.+)$/);
+    }
 
     var detail = [];
-    if (author) detail.push("作者: " + author);
-    if (category) detail.push("分类: " + category);
-    if (wordCount) detail.push("字数: " + wordCount);
-    if (!ongoing) detail.push("状态: 完结");
-    else detail.push("状态: 连载");
+    if (author) detail.push("作者：" + author);
+    if (category) detail.push("分類：" + category);
+    detail.push("狀態：" + status);
+    if (wordCount) detail.push("字數：" + wordCount);
+    if (updated) detail.push("更新：" + updated);
+
+    var introduction = buildIntroduction(name, author, desc);
+    var genres = buildGenres(category);
 
     return Response.success({
         name: name || "未知书名",
         cover: cover,
         author: author || "",
-        description: desc || "",
+        description: introduction,
         detail: detail.join("<br>"),
         ongoing: ongoing,
+        genres: genres,
         host: HOST
     });
 }

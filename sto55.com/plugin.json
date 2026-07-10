@@ -2,11 +2,11 @@
   "metadata": {
     "name": "思兔阅读 (sto55)",
     "author": "Hung",
-    "version": 4,
+    "version": 5,
     "source": "https://sto55.com/",
     "icon": "icon.png",
     "regexp": "https?://(www\\.)?sto55\\.com/book/\\d+(?:/\\d+(?:/\\d+)?)?/?(?:\\?.*)?$",
-    "description": "Đọc truyện trên trang https://sto55.com/ - 思兔閱讀",
+    "description": "Đọc truyện trên trang https://sto55.com/ - 思兔閱讀 - sto9.com",
     "locale": "zh_CN",
     "language": "javascript",
     "type": "chinese_novel"
