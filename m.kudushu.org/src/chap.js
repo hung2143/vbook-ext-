@@ -1,4 +1,5 @@
 var HOST = "https://m.kudushu.org";
+var BROWSER_TIMEOUT = 12000;
 
 function cleanText(value) {
     return (value || "").replace(/\s+/g, " ").trim();
@@ -39,11 +40,7 @@ function loadDoc(url, referer) {
     var browser = Engine.newBrowser();
     try {
         browser.setUserAgent(UserAgent.android());
-        var doc = browser.launch(url, 25000);
-        if (isBlocked(doc)) {
-            sleep(4000);
-            doc = browser.launch(url, 25000);
-        }
+        var doc = browser.launch(url, BROWSER_TIMEOUT);
         return isBlocked(doc) ? null : doc;
     } catch (e) {
         Console.log("kudushu chapter: " + e);

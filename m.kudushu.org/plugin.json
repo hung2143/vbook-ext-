@@ -2,7 +2,7 @@
   "metadata": {
     "name": "Kudushu",
     "author": "Hung",
-    "version": 6,
+    "version": 7,
     "source": "https://m.kudushu.org/",
     "icon": "icon.png",
     "regexp": "https?://(?:m\\.|www\\.)?kudushu\\.org/(?:book/\\d+/?|html/\\d+/(?:\\d+(?:_\\d+)?|asc-\\d+)/?)(?:\\?.*)?$",
@@ -22,6 +22,6 @@
   },
   "config": {
     "thread_num": 1,
-    "delay": 15000
+    "delay": 3000
   }
 }

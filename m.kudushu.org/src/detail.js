@@ -1,5 +1,27 @@
 var HOST = "https://m.kudushu.org";
 var COVER_HOST = "https://www.kudushu.org";
+var BROWSER_TIMEOUT = 12000;
+
+var GENRE_IDS = {
+    "玄幻魔法": 1,
+    "武侠修真": 2,
+    "都市言情": 3,
+    "历史军事": 4,
+    "侦探推理": 5,
+    "网游动漫": 6,
+    "科幻小说": 7,
+    "恐怖灵异": 8,
+    "言情小说": 9,
+    "其他类型": 10,
+    "经部": 11,
+    "史书": 12,
+    "子部": 13,
+    "集部": 14,
+    "四库之外": 15,
+    "古典书籍": 16,
+    "诗歌": 17,
+    "宋词": 18
+};
 
 function cleanText(value) {
     return (value || "").replace(/\s+/g, " ").trim();
@@ -27,7 +49,7 @@ function buildCover(bookId) {
 function isBlocked(doc) {
     if (!doc) return true;
     var text = doc.text() || "";
-    return /Just a moment|Checking your browser|Enable JavaScript and cookies|cf[-_]chl|challenges\.cloudflare\.com/i.test(text);
+    return /Just a moment|Checking your browser|Enable JavaScript and cookies|Attention Required|Access denied|cf[-_]chl|challenges\.cloudflare\.com/i.test(text);
 }
 
 function loadDoc(url) {
@@ -49,11 +71,7 @@ function loadDoc(url) {
     var browser = Engine.newBrowser();
     try {
         browser.setUserAgent(UserAgent.android());
-        var doc = browser.launch(url, 25000);
-        if (isBlocked(doc)) {
-            sleep(4000);
-            doc = browser.launch(url, 25000);
-        }
+        var doc = browser.launch(url, BROWSER_TIMEOUT);
         return isBlocked(doc) ? null : doc;
     } catch (e) {
         Console.log("kudushu detail: " + e);
@@ -71,6 +89,42 @@ function firstText(doc, selector) {
 function firstAttr(doc, selector, attr) {
     var element = doc.select(selector).first();
     return element ? cleanText(element.attr(attr)) : "";
+}
+
+function cleanTitle(value) {
+    return cleanText(value)
+        .replace(/\s*(?:全文阅读|全文閱讀|最新章节|最新章節).*$/i, "")
+        .replace(/\s*[-_|]\s*(?:苦读书|苦讀書).*$/i, "")
+        .replace(/^《\s*(.*?)\s*》$/, "$1")
+        .trim();
+}
+
+function isTitle(value) {
+    return !!value && !/^(?:苦读书|苦讀書|首页|首頁|书架|書架)$/i.test(value);
+}
+
+function titleFromMeta(value) {
+    value = cleanTitle(value);
+    // OG title của Kudushu thường có dạng "Tên truyện, tác giả, ...".
+    // Chỉ tách theo mẫu này ở metadata; tên hiển thị trên trang được giữ nguyên.
+    var match = value.match(/^(.+?)[,，][^,，]+[,，]/);
+    return cleanTitle(match ? match[1] : value);
+}
+
+function extractTitle(doc) {
+    var selectors = [
+        ".cataloginfo h1", ".book-info h1", ".book-title h1", "#info h1", "h1",
+        ".cataloginfo h3", ".book-info h3", ".book-title h3"
+    ];
+
+    for (var i = 0; i < selectors.length; i++) {
+        var title = cleanTitle(firstText(doc, selectors[i]));
+        if (isTitle(title)) return title;
+    }
+
+    var metaTitle = firstAttr(doc, "meta[property='og:novel:book_name']", "content");
+    if (!metaTitle) metaTitle = firstAttr(doc, "meta[property='og:title']", "content");
+    return titleFromMeta(metaTitle);
 }
 
 function valueAfterLabel(value, label) {
@@ -95,6 +149,62 @@ function infoValue(doc, labels) {
     return result;
 }
 
+function cleanDescription(value) {
+    return cleanText(value)
+        .replace(/^(?:本书简介|本書簡介|简介|簡介)[：:]?\s*/, "")
+        .replace(/(?:最新章节推荐地址|最新章節推薦地址|最新网址|最新網址)[：:].*$/i, "")
+        .trim();
+}
+
+function extractDescription(doc) {
+    var description = "";
+    var selectors = [
+        "#intro", ".intro", ".bookintro", ".book-intro", ".description",
+        ".book-description", "[class*='summary']"
+    ];
+
+    for (var i = 0; i < selectors.length; i++) {
+        doc.select(selectors[i]).forEach(function(element) {
+            var value = cleanDescription(element.text());
+            if (value && value.length > description.length) description = value;
+        });
+        if (description) return description;
+    }
+
+    // Một số template cũ không gắn class cho phần giới thiệu.
+    doc.select("p").forEach(function(element) {
+        var value = cleanText(element.text());
+        if (/^(?:本书简介|本書簡介|简介|簡介)[：:]/.test(value)) {
+            value = cleanDescription(value);
+            if (value.length > description.length) description = value;
+        }
+    });
+    if (description) return description;
+
+    description = firstAttr(doc, "meta[name='description']", "content");
+    if (!description) description = firstAttr(doc, "meta[property='og:description']", "content");
+    return cleanDescription(description);
+}
+
+function buildGenres(category) {
+    var result = [];
+    var seen = {};
+
+    cleanText(category).split(/[、,，/|]+/).forEach(function(value) {
+        var title = cleanText(value);
+        var id = GENRE_IDS[title];
+        if (!title || !id || seen[id]) return;
+        seen[id] = true;
+        result.push({
+            title: title,
+            input: HOST + "/sort/" + id + "/1.html",
+            script: "book.js"
+        });
+    });
+
+    return result;
+}
+
 function execute(url) {
     var bookId = getBookId(url);
     if (!bookId) return null;
@@ -102,9 +212,7 @@ function execute(url) {
     var doc = loadDoc(HOST + "/book/" + bookId + "/");
     if (!doc) return null;
 
-    var title = firstText(doc, ".cataloginfo h3, .book-info h1, .book-title h1, h1");
-    if (!title) title = firstAttr(doc, "meta[property='og:title']", "content");
-    title = title.replace(/(?:全文阅读|[-_|]\s*苦读书).*$/, "").trim();
+    var title = extractTitle(doc);
 
     var author = firstAttr(doc, "meta[property='og:novel:author']", "content");
     if (!author) author = infoValue(doc, ["作者", "作者："]);
@@ -123,9 +231,7 @@ function execute(url) {
     if (!cover) cover = firstAttr(doc, "meta[property='og:image']", "content");
     cover = cover ? toUrl(cover) : buildCover(bookId);
 
-    var description = firstText(doc, ".intro p, .intro, .description, #intro, [class*='summary']");
-    description = description.replace(/^(?:本书简介|简介)[：:]?\s*/, "");
-    if (!description) description = firstAttr(doc, "meta[name='description']", "content");
+    var description = extractDescription(doc);
 
     var status = firstAttr(doc, "meta[property='og:novel:status']", "content");
     if (!status) status = infoValue(doc, ["状态"]);
@@ -145,6 +251,7 @@ function execute(url) {
         description: description || title,
         detail: detail.join("<br>"),
         ongoing: ongoing,
+        genres: buildGenres(type),
         host: HOST
     });
 }
