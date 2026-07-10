@@ -162,21 +162,36 @@ function parseBooks(doc) {
     return data;
 }
 
-function findNextPage(doc, targetUrl) {
-    var hasNext = false;
-    doc.select("a").forEach(function(a) {
-        var text = (a.text() || "").trim();
-        if (text === "下一页" || text === "下一頁" || text === "»" || text === "下页") {
-            hasNext = true;
-        }
-    });
-    if (!hasNext) return null;
+function parsePagedUrl(url) {
+    var cleanUrl = normalizeUrl(url).replace(/[?#].*$/, "");
+    var match = cleanUrl.match(/^(.*_)(\d+)(\.html)$/);
+    if (!match) return null;
 
-    var m = targetUrl.match(/_(\d+)\.html$/);
-    if (m) {
-        return String(parseInt(m[1], 10) + 1);
-    }
-    return null;
+    return {
+        prefix: match[1],
+        page: parseInt(match[2], 10),
+        suffix: match[3]
+    };
+}
+
+function findNextPage(doc, targetUrl) {
+    var current = parsePagedUrl(targetUrl);
+    if (!current || isNaN(current.page)) return null;
+
+    var nextPage = current.page + 1;
+    var nextUrl = current.prefix + nextPage + current.suffix;
+    var hasNext = false;
+
+    doc.select("a[href]").forEach(function(a) {
+        if (hasNext) return;
+        var href = (a.attr("href") || "").trim();
+        if (!href) return;
+
+        var candidateUrl = normalizeUrl(href).replace(/[?#].*$/, "");
+        if (candidateUrl === nextUrl) hasNext = true;
+    });
+
+    return hasNext ? String(nextPage) : null;
 }
 
 function execute(url, page) {

@@ -2,12 +2,14 @@ var HOST = "https://sto55.com";
 
 function execute() {
     return Response.success([
-        { title: "玄幻奇幻", input: HOST + "/list_1_1.html", script: "book.js" },
-        { title: "武侠仙侠", input: HOST + "/list_3_1.html", script: "book.js" },
-        { title: "都市言情", input: HOST + "/list_4_1.html", script: "book.js" },
-        { title: "历史军事", input: HOST + "/list_5_1.html", script: "book.js" },
-        { title: "科幻游戏", input: HOST + "/list_6_1.html", script: "book.js" },
-        { title: "悬疑灵异", input: HOST + "/list_7_1.html", script: "book.js" },
-        { title: "轻小说", input: HOST + "/list_8_1.html", script: "book.js" }
+        { title: "玄幻奇幻", input: HOST + "/class_1_1.html", script: "book.js" },
+        { title: "武俠仙俠", input: HOST + "/class_2_1.html", script: "book.js" },
+        { title: "現代都市", input: HOST + "/class_3_1.html", script: "book.js" },
+        { title: "歷史軍事", input: HOST + "/class_4_1.html", script: "book.js" },
+        { title: "科幻小說", input: HOST + "/class_5_1.html", script: "book.js" },
+        { title: "遊戲競技", input: HOST + "/class_6_1.html", script: "book.js" },
+        { title: "恐怖靈異", input: HOST + "/class_7_1.html", script: "book.js" },
+        { title: "言情小說", input: HOST + "/class_8_1.html", script: "book.js" },
+        { title: "其他類型", input: HOST + "/class_9_1.html", script: "book.js" }
     ]);
 }
