@@ -1,5 +1,7 @@
 var HOST = "https://m.kudushu.org";
-var BROWSER_TIMEOUT = 12000;
+var BROWSER_TIMEOUT = 15000;
+var CHALLENGE_RETRIES = 2;
+var CHALLENGE_WAIT = 8000;
 
 function cleanText(value) {
     return (value || "").replace(/\s+/g, " ").trim();
@@ -18,10 +20,26 @@ function toUrl(link, baseUrl) {
 function isBlocked(doc) {
     if (!doc) return true;
     var text = doc.text() || "";
-    return /Just a moment|Checking your browser|Enable JavaScript and cookies|cf[-_]chl|challenges\.cloudflare\.com/i.test(text);
+    var html = "";
+    try { html = doc.html() || ""; } catch (ignore) {}
+    return /Just a moment|Checking your browser|Performing security verification|Verify you are human|Enable JavaScript and cookies|Cloudflare Ray ID|cf[-_]chl|challenges\.cloudflare\.com|cf-turnstile-response/i.test(text + " " + html);
 }
 
-function loadDoc(url, referer) {
+function loadWithBrowser(browser, url) {
+    var doc = browser.launch(url, BROWSER_TIMEOUT);
+
+    for (var i = 0; i < CHALLENGE_RETRIES && isBlocked(doc); i++) {
+        Console.log("kudushu chapter: waiting for Cloudflare (" + (i + 1) + "/" + CHALLENGE_RETRIES + ")");
+        sleep(CHALLENGE_WAIT + i * 4000);
+        try { doc = browser.html(); } catch (ignore) {}
+        if (!isBlocked(doc)) break;
+        doc = browser.launch(url, BROWSER_TIMEOUT);
+    }
+
+    return isBlocked(doc) ? null : doc;
+}
+
+function loadDoc(url, referer, browser) {
     try {
         var response = fetch(url, {
             headers: {
@@ -37,16 +55,11 @@ function loadDoc(url, referer) {
         }
     } catch (ignore) {}
 
-    var browser = Engine.newBrowser();
     try {
-        browser.setUserAgent(UserAgent.android());
-        var doc = browser.launch(url, BROWSER_TIMEOUT);
-        return isBlocked(doc) ? null : doc;
+        return loadWithBrowser(browser, url);
     } catch (e) {
         Console.log("kudushu chapter: " + e);
         return null;
-    } finally {
-        try { browser.close(); } catch (ignore2) {}
     }
 }
 
@@ -87,28 +100,41 @@ function execute(url) {
     var basePath = chapterBase(firstUrl);
     if (!basePath) return null;
 
-    var currentUrl = firstUrl;
-    var content = "";
-    var seen = {};
-    var guard = 0;
+    var browser = Engine.newBrowser();
+    try {
+        browser.setUserAgent(UserAgent.android());
 
-    while (currentUrl && !seen[currentUrl] && guard < 20) {
-        seen[currentUrl] = true;
-        guard++;
+        var currentUrl = firstUrl;
+        var content = "";
+        var seen = {};
+        var guard = 0;
+        var wasBlocked = false;
 
-        var doc = loadDoc(currentUrl, firstUrl);
-        if (!doc) break;
+        while (currentUrl && !seen[currentUrl] && guard < 20) {
+            seen[currentUrl] = true;
+            guard++;
 
-        var contentElement = doc.select("#novelcontent, .novelcontent, #chaptercontent, .chapter-content").first();
-        var html = contentElement ? cleanContent(contentElement.html()) : "";
-        if (!html) break;
-        content += (content ? "<br><br>" : "") + html;
+            var doc = loadDoc(currentUrl, firstUrl, browser);
+            if (!doc) {
+                wasBlocked = true;
+                break;
+            }
 
-        var nextUrl = findNextPage(doc, currentUrl, basePath);
-        if (!nextUrl) break;
-        sleep(800);
-        currentUrl = nextUrl;
+            var contentElement = doc.select("#novelcontent, .novelcontent, #chaptercontent, .chapter-content").first();
+            var html = contentElement ? cleanContent(contentElement.html()) : "";
+            if (!html) break;
+            content += (content ? "<br><br>" : "") + html;
+
+            var nextUrl = findNextPage(doc, currentUrl, basePath);
+            if (!nextUrl) break;
+            sleep(800);
+            currentUrl = nextUrl;
+        }
+
+        if (content) return Response.success(content);
+        if (wasBlocked) return Response.error("Kudushu đang yêu cầu xác minh Cloudflare. Hãy thử lại sau khi mở trang nguồn trong trình duyệt.");
+        return Response.error("Không tìm thấy nội dung chương trên Kudushu.");
+    } finally {
+        try { browser.close(); } catch (ignore) {}
     }
-
-    return content ? Response.success(content) : null;
 }

@@ -1,5 +1,7 @@
 var HOST = "https://m.kudushu.org";
-var BROWSER_TIMEOUT = 12000;
+var BROWSER_TIMEOUT = 15000;
+var CHALLENGE_RETRIES = 2;
+var CHALLENGE_WAIT = 8000;
 
 function cleanText(value) {
     return (value || "").replace(/\s+/g, " ").trim();
@@ -28,10 +30,26 @@ function normalBookUrl(url) {
 function isBlocked(doc) {
     if (!doc) return true;
     var text = doc.text() || "";
-    return /Just a moment|Checking your browser|Enable JavaScript and cookies|cf[-_]chl|challenges\.cloudflare\.com/i.test(text);
+    var html = "";
+    try { html = doc.html() || ""; } catch (ignore) {}
+    return /Just a moment|Checking your browser|Performing security verification|Verify you are human|Enable JavaScript and cookies|Cloudflare Ray ID|cf[-_]chl|challenges\.cloudflare\.com|cf-turnstile-response/i.test(text + " " + html);
 }
 
-function loadDoc(url, referer) {
+function loadWithBrowser(browser, url) {
+    var doc = browser.launch(url, BROWSER_TIMEOUT);
+
+    for (var i = 0; i < CHALLENGE_RETRIES && isBlocked(doc); i++) {
+        Console.log("kudushu toc: waiting for Cloudflare (" + (i + 1) + "/" + CHALLENGE_RETRIES + ")");
+        sleep(CHALLENGE_WAIT + i * 4000);
+        try { doc = browser.html(); } catch (ignore) {}
+        if (!isBlocked(doc)) break;
+        doc = browser.launch(url, BROWSER_TIMEOUT);
+    }
+
+    return isBlocked(doc) ? null : doc;
+}
+
+function loadDoc(url, referer, browser) {
     try {
         var response = fetch(url, {
             headers: {
@@ -47,16 +65,11 @@ function loadDoc(url, referer) {
         }
     } catch (ignore) {}
 
-    var browser = Engine.newBrowser();
     try {
-        browser.setUserAgent(UserAgent.android());
-        var doc = browser.launch(url, BROWSER_TIMEOUT);
-        return isBlocked(doc) ? null : doc;
+        return loadWithBrowser(browser, url);
     } catch (e) {
         Console.log("kudushu toc: " + e);
         return null;
-    } finally {
-        try { browser.close(); } catch (ignore2) {}
     }
 }
 
@@ -127,20 +140,27 @@ function execute(url) {
     var baseUrl = normalBookUrl(url);
     if (!bookId || !baseUrl) return null;
 
-    var doc = loadDoc(baseUrl, HOST + "/");
-    if (!doc) return null;
+    var browser = Engine.newBrowser();
+    try {
+        browser.setUserAgent(UserAgent.android());
 
-    var data = [];
-    var seen = {};
-    addChapters(doc, bookId, baseUrl, data, seen);
+        var doc = loadDoc(baseUrl, HOST + "/", browser);
+        if (!doc) return Response.error("Kudushu đang yêu cầu xác minh Cloudflare. Hãy thử lại sau khi mở trang nguồn trong trình duyệt.");
 
-    var pages = collectPages(doc, bookId, baseUrl);
-    for (var i = 0; i < pages.length; i++) {
-        if (pages[i] === baseUrl || pageIndex(pages[i]) <= 1) continue;
-        sleep(1200);
-        var pageDoc = loadDoc(pages[i], baseUrl);
-        if (pageDoc) addChapters(pageDoc, bookId, pages[i], data, seen);
+        var data = [];
+        var seen = {};
+        addChapters(doc, bookId, baseUrl, data, seen);
+
+        var pages = collectPages(doc, bookId, baseUrl);
+        for (var i = 0; i < pages.length; i++) {
+            if (pages[i] === baseUrl || pageIndex(pages[i]) <= 1) continue;
+            sleep(1200);
+            var pageDoc = loadDoc(pages[i], baseUrl, browser);
+            if (pageDoc) addChapters(pageDoc, bookId, pages[i], data, seen);
+        }
+
+        return Response.success(data);
+    } finally {
+        try { browser.close(); } catch (ignore) {}
     }
-
-    return Response.success(data);
 }

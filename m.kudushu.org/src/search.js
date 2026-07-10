@@ -1,6 +1,8 @@
 var HOST = "https://m.kudushu.org";
 var COVER_HOST = "https://www.kudushu.org";
-var BROWSER_TIMEOUT = 12000;
+var BROWSER_TIMEOUT = 15000;
+var CHALLENGE_RETRIES = 2;
+var CHALLENGE_WAIT = 8000;
 
 function cleanText(value) {
     return (value || "").replace(/\s+/g, " ").trim();
@@ -28,7 +30,23 @@ function buildCover(bookId) {
 function isBlocked(doc) {
     if (!doc) return true;
     var text = doc.text() || "";
-    return /Just a moment|Checking your browser|Enable JavaScript and cookies|cf[-_]chl|challenges\.cloudflare\.com/i.test(text);
+    var html = "";
+    try { html = doc.html() || ""; } catch (ignore) {}
+    return /Just a moment|Checking your browser|Performing security verification|Verify you are human|Enable JavaScript and cookies|Cloudflare Ray ID|cf[-_]chl|challenges\.cloudflare\.com|cf-turnstile-response/i.test(text + " " + html);
+}
+
+function loadWithBrowser(browser, url) {
+    var doc = browser.launch(url, BROWSER_TIMEOUT);
+
+    for (var i = 0; i < CHALLENGE_RETRIES && isBlocked(doc); i++) {
+        Console.log("kudushu search: waiting for Cloudflare (" + (i + 1) + "/" + CHALLENGE_RETRIES + ")");
+        sleep(CHALLENGE_WAIT + i * 4000);
+        try { doc = browser.html(); } catch (ignore) {}
+        if (!isBlocked(doc)) break;
+        doc = browser.launch(url, BROWSER_TIMEOUT);
+    }
+
+    return isBlocked(doc) ? null : doc;
 }
 
 function loadDoc(url) {
@@ -50,8 +68,7 @@ function loadDoc(url) {
     var browser = Engine.newBrowser();
     try {
         browser.setUserAgent(UserAgent.android());
-        var doc = browser.launch(url, BROWSER_TIMEOUT);
-        return isBlocked(doc) ? null : doc;
+        return loadWithBrowser(browser, url);
     } catch (e) {
         Console.log("kudushu search: " + e);
         return null;
@@ -94,7 +111,7 @@ function execute(key) {
     if (!key) return Response.success([]);
 
     var doc = loadDoc(HOST + "/modules/article/search.php?searchkey=" + encodeURIComponent(key));
-    if (!doc) return Response.success([]);
+    if (!doc) return Response.error("Kudushu đang yêu cầu xác minh Cloudflare. Hãy thử lại sau khi mở trang nguồn trong trình duyệt.");
 
     var data = [];
     var seen = {};
