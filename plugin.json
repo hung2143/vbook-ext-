@@ -86,7 +86,7 @@
       "name": "QQ阅读 HTML5",
       "author": "Hung",
       "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/html5qq/plugin.zip",
-      "version": 9,
+      "version": 10,
       "source": "https://bookshelf.html5.qq.com/qbread/categorylist?ch=001995&groupid=1501",
       "icon": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/html5qq/icon.png",
       "description": "Đọc truyện trên QQ阅读 HTML5",

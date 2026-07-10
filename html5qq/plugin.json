@@ -2,7 +2,7 @@
   "metadata": {
     "name": "QQ阅读 HTML5",
     "author": "Moleys",
-    "version": 9,
+    "version": 10,
     "source": "https://bookshelf.html5.qq.com/qbread/categorylist?ch=001995&groupid=1501",
     "icon": "icon.png",
     "regexp": "https?://(?:bookshelf|novel)\\.html5\\.qq\\.com/(?:qbread/intro|autojump/intro|portal/novel-intro)(?:[/?].*)?",
