@@ -78,6 +78,7 @@ function cleanContent(html) {
         .replace(/(?:最新|最新网址)[^<]{0,100}(?:kudushu\.org)[^<]*/gi, "")
         .replace(/（本章未完[^）]*）/g, "")
         .replace(/\(本章未完[^)]*\)/g, "")
+        .replace(/[（(]\s*第\s*\d+\s*\/\s*\d+\s*[页頁]\s*[）)]/g, "")
         .replace(/&nbsp;/gi, " ")
         .trim();
 }
@@ -90,22 +91,63 @@ function chapterBase(url) {
 function normalizeChapterUrl(url) {
     url = toUrl(url);
     var desktop = String(url || "").match(/\/html\/(\d+)\/(\d+)\/(\d+)\.html(?:[?#].*)?$/i);
-    if (!desktop || Math.floor(parseInt(desktop[2], 10) / 1000) !== parseInt(desktop[1], 10)) return url;
-    return HOST + "/html/" + desktop[2] + "/" + desktop[3] + "/";
+    if (desktop && Math.floor(parseInt(desktop[2], 10) / 1000) === parseInt(desktop[1], 10)) {
+        return HOST + "/html/" + desktop[2] + "/" + desktop[3] + "/";
+    }
+
+    // Opening an imported _2/_3 URL must still return the complete chapter,
+    // so always normalize mobile sub-pages back to page 1.
+    var mobile = String(url || "").match(/\/html\/(\d+)\/(\d+)(?:_\d+)?\/?(?:[?#].*)?$/i);
+    return mobile ? HOST + "/html/" + mobile[1] + "/" + mobile[2] + "/" : url;
+}
+
+function escapeRegExp(value) {
+    return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function chapterPageNumber(url, basePath) {
+    url = String(url || "").replace(/[?#].*$/, "");
+    var chapterId = basePath.substring(basePath.lastIndexOf("/") + 1);
+    var match = url.match(new RegExp("(?:^|/)" + escapeRegExp(chapterId) + "(?:_(\\d+))?/?$", "i"));
+    if (!match) return 0;
+    return match[1] ? parseInt(match[1], 10) : 1;
+}
+
+function chapterPageUrl(basePath, page) {
+    return HOST + basePath + (page > 1 ? "_" + page : "") + "/";
+}
+
+function chapterPageCount(doc) {
+    var text = doc ? (doc.text() || "") : "";
+    var match = text.match(/第\s*\d+\s*\/\s*(\d+)\s*[页頁]/i);
+    return match ? parseInt(match[1], 10) : 0;
+}
+
+function chapterCurrentPage(doc) {
+    var text = doc ? (doc.text() || "") : "";
+    var match = text.match(/第\s*(\d+)\s*\/\s*\d+\s*[页頁]/i);
+    return match ? parseInt(match[1], 10) : 0;
 }
 
 function findNextPage(doc, currentUrl, basePath) {
-    var nextUrl = "";
-    doc.select("a[href]").forEach(function(a) {
-        if (nextUrl) return;
-        var label = cleanText(a.text()).replace(/\s/g, "");
-        var rel = (a.attr("rel") || "").toLowerCase();
-        if (label !== "下页" && label !== "下一页" && label !== "下一頁" && label !== "»" && rel !== "next") return;
+    var currentPage = chapterPageNumber(currentUrl, basePath) || 1;
+    var expectedPage = currentPage + 1;
+    var linkedPage = 0;
 
-        var candidate = toUrl(a.attr("href") || "", currentUrl).replace(/[?#].*$/, "");
-        if (candidate.indexOf(HOST + basePath + "_") === 0) nextUrl = candidate;
+    // Match the href itself. Kudushu currently labels the button as 下—页,
+    // so matching only the visible text incorrectly treats page 1 as complete.
+    doc.select("a[href]").forEach(function(a) {
+        if (linkedPage) return;
+        if (chapterPageNumber(a.attr("href") || "", basePath) === expectedPage) {
+            linkedPage = expectedPage;
+        }
     });
-    return nextUrl;
+    if (linkedPage) return chapterPageUrl(basePath, linkedPage);
+
+    // Some templates omit or obfuscate the href but retain (第1/3页).
+    // Construct the canonical _2/_3 URL from that page count as a fallback.
+    var totalPages = chapterPageCount(doc);
+    return totalPages >= expectedPage ? chapterPageUrl(basePath, expectedPage) : "";
 }
 
 function execute(url) {
@@ -122,6 +164,9 @@ function execute(url) {
         var seen = {};
         var guard = 0;
         var wasBlocked = false;
+        var pageFailure = false;
+        var loadedPages = 0;
+        var totalPages = 0;
 
         while (currentUrl && !seen[currentUrl] && guard < 20) {
             seen[currentUrl] = true;
@@ -130,13 +175,28 @@ function execute(url) {
             var doc = loadDoc(currentUrl, firstUrl, browser);
             if (!doc) {
                 wasBlocked = true;
+                if (loadedPages > 0) pageFailure = true;
+                break;
+            }
+
+            var expectedPage = chapterPageNumber(currentUrl, basePath) || 1;
+            var actualPage = chapterCurrentPage(doc);
+            if (actualPage && actualPage !== expectedPage) {
+                pageFailure = true;
                 break;
             }
 
             var contentElement = doc.select("#novelcontent, .novelcontent, #chaptercontent, .chapter-content").first();
             var html = contentElement ? cleanContent(contentElement.html()) : "";
-            if (!html) break;
+            if (!html) {
+                if (loadedPages > 0) pageFailure = true;
+                break;
+            }
             content += (content ? "<br><br>" : "") + html;
+            loadedPages++;
+
+            var detectedTotal = chapterPageCount(doc);
+            if (detectedTotal > totalPages) totalPages = detectedTotal;
 
             var nextUrl = findNextPage(doc, currentUrl, basePath);
             if (!nextUrl) break;
@@ -144,6 +204,9 @@ function execute(url) {
             currentUrl = nextUrl;
         }
 
+        if (pageFailure || (totalPages > 0 && loadedPages < totalPages)) {
+            return Response.error("Không thể tải đủ các trang của chương Kudushu. Vui lòng thử lại.");
+        }
         if (content) return Response.success(content);
         if (wasBlocked) return Response.error("Kudushu đang yêu cầu xác minh Cloudflare. Hãy thử lại sau khi mở trang nguồn trong trình duyệt.");
         return Response.error("Không tìm thấy nội dung chương trên Kudushu.");
