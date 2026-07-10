@@ -1,4 +1,5 @@
 var HOST = "https://sto55.com";
+var METADATA_HOST = "https://sto9.com";
 
 function browserFetch(url, timeout) {
     if (!timeout) timeout = 20000;
@@ -54,61 +55,121 @@ function fetchWithRetry(url) {
     return null;
 }
 
-/**
- * Lấy mô tả truyện từ trang tìm kiếm (vì trang chi tiết sto55 không có phần giới thiệu)
- * Tìm theo tên sách, khớp bookId để đảm bảo lấy đúng truyện
- */
-function fetchDescFromSearch(bookName, bookId) {
-    if (!bookName) return "";
+function cleanDescription(value) {
+    return (value || "")
+        .replace(/^\s*(?:簡介|简介)[：:]\s*/, "")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function normalizeBookName(value) {
+    return (value || "")
+        .replace(/[\s\u3000]+/g, "")
+        .replace(/[：:，,。．·・!！?？“”"'‘’《》〈〉（）()【】\[\]—_\-]/g, "")
+        .toLowerCase();
+}
+
+function descriptionFromSto55Search(doc, bookId) {
+    var desc = "";
+    doc.select(".bookbox").forEach(function(box) {
+        if (desc) return;
+
+        var linkEl = box.select(".bookname a").first();
+        if (!linkEl) return;
+
+        var href = linkEl.attr("href") || "";
+        var idMatch = href.match(/\/book\/(\d+)/);
+        if (!idMatch || idMatch[1] !== String(bookId)) return;
+
+        var updateEl = box.select(".update").first();
+        if (updateEl) desc = cleanDescription(updateEl.text());
+    });
+    return desc;
+}
+
+function buildSto55SearchKeys(bookName) {
+    var keys = [];
+    var name = (bookName || "").trim();
+
+    function add(value) {
+        value = (value || "").trim();
+        if (value.length < 2 || value === name || keys.indexOf(value) !== -1) return;
+        keys.push(value);
+    }
+
+    // Tìm đúng toàn bộ tên thường bị sto55 chuyển thẳng về trang chi tiết rỗng.
+    // Một phần tên sẽ giữ trang kết quả, nơi .update chứa phần giới thiệu đầy đủ.
+    var parts = name.split(/[：:，,。．·・!！?？—_\-]/);
+    for (var i = 0; i < parts.length; i++) add(parts[i]);
+    if (name.length > 3) add(name.substring(0, Math.min(4, name.length - 1)));
+    if (name.length > 2) add(name.substring(0, 2));
+
+    return keys;
+}
+
+function fetchDescFromSto55(bookName, bookId) {
+    var keys = buildSto55SearchKeys(bookName);
+    for (var i = 0; i < keys.length; i++) {
+        try {
+            var searchUrl = HOST + "/search/" + encodeURIComponent(keys[i]) + "/1.html";
+            var response = fetch(searchUrl, {
+                headers: {
+                    "user-agent": UserAgent.android(),
+                    "referer": HOST + "/",
+                    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "accept-language": "zh-CN,zh;q=0.9,en;q=0.8"
+                }
+            });
+            if (!response || !response.ok) continue;
+
+            var desc = descriptionFromSto55Search(response.html(), bookId);
+            if (desc) return desc;
+        } catch (e) {
+            Console.log("sto55 description search error: " + e);
+        }
+    }
+    return "";
+}
+
+function fetchDescFromSto9(bookName) {
     try {
-        var searchUrl = HOST + "/search";
-        var body = "searchtype=all&searchkey=" + encodeURIComponent(bookName) + "&action=login&submit=";
+        var searchUrl = METADATA_HOST + "/search/" + encodeURIComponent(bookName) + "/1.html";
         var response = fetch(searchUrl, {
-            method: "POST",
             headers: {
                 "user-agent": UserAgent.android(),
-                "referer": HOST + "/",
+                "referer": METADATA_HOST + "/",
                 "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "content-type": "application/x-www-form-urlencoded"
-            },
-            body: body
+                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8"
+            }
         });
         if (!response || !response.ok) return "";
 
-        var searchDoc = response.html();
-        var desc = "";
+        var doc = response.html();
+        var resultName = doc.select("meta[property='og:title']").attr("content") ||
+            doc.select(".booknav2 h1").text();
+        if (normalizeBookName(resultName) !== normalizeBookName(bookName)) return "";
 
-        // Tìm .bookbox khớp với bookId hiện tại
-        searchDoc.select(".bookbox").forEach(function(box) {
-            if (desc) return; // Đã tìm thấy rồi
-            var linkEl = box.select(".bookname a").first();
-            if (!linkEl) return;
-            var href = linkEl.attr("href") || "";
-            if (href.indexOf("/book/" + bookId) !== -1 || href.indexOf("/book/" + bookId + "/") !== -1) {
-                var updateEl = box.select(".update").first();
-                if (updateEl) {
-                    desc = updateEl.text().trim();
-                    desc = desc.replace(/^簡介[：:]\s*/, "").replace(/^简介[：:]\s*/, "").trim();
-                }
-            }
-        });
-
-        // Nếu không tìm được theo bookId, lấy kết quả đầu tiên
-        if (!desc) {
-            var firstUpdate = searchDoc.select(".bookbox .update").first();
-            if (firstUpdate) {
-                desc = firstUpdate.text().trim();
-                desc = desc.replace(/^簡介[：:]\s*/, "").replace(/^简介[：:]\s*/, "").trim();
-            }
-        }
-
-        Console.log("fetchDescFromSearch result: " + (desc ? desc.substring(0, 50) + "..." : "EMPTY"));
-        return desc;
+        var desc = doc.select("meta[property='og:description']").attr("content");
+        if (!desc) desc = doc.select("#tab_info .navtxt p").first().text();
+        return cleanDescription(desc);
     } catch (e) {
-        Console.log("fetchDescFromSearch error: " + e);
+        Console.log("sto9 description fallback error: " + e);
         return "";
     }
+}
+
+/**
+ * Trang chi tiết sto55 để trống .bookintro. Mô tả đầy đủ nằm ở kết quả tìm kiếm;
+ * sto9 (domain mới cùng hệ thống) được dùng làm nguồn dự phòng khi sto55 redirect.
+ */
+function fetchDescFromSearch(bookName, bookId) {
+    if (!bookName) return "";
+
+    var desc = fetchDescFromSto55(bookName, bookId);
+    if (!desc) desc = fetchDescFromSto9(bookName);
+
+    Console.log("fetchDescFromSearch result: " + (desc ? desc.substring(0, 50) + "..." : "EMPTY"));
+    return desc;
 }
 
 function execute(url) {
@@ -210,7 +271,7 @@ function execute(url) {
         name: name || "未知书名",
         cover: cover,
         author: author || "",
-        description: desc || name || "",
+        description: desc || "",
         detail: detail.join("<br>"),
         ongoing: ongoing,
         host: HOST
