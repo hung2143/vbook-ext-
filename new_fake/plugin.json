@@ -1,0 +1,23 @@
+{
+    "metadata": {
+        "name": "Fake-one",
+        "author": "Hung",
+        "version": 1,
+        "source": "https:\/\/fanqienovel.com\/",
+        "regexp": "fanqienovel\\.com\/.*",
+        "description": "Tomato viết ngược lại vẫn là Tomato. Có đảo ngược thế nào thì cà chua cũng vẫn là cà chua. Cà chua xanh thì bên trong cũng xanh, ngoài đỏ thì bên trong cũng đỏ. Không giống như quả dưa hấu, ngoài xanh mà trong lại đỏ…",
+        "locale": "zh_CN",
+        "type": "chinese_novel",
+        "language": "javascript",
+        "encrypt": false
+    },
+    "script": {
+        "home": "home.js",
+        "genre": "genre.js",
+        "detail": "detail.js",
+        "search": "search.js",
+        "page": "page.js",
+        "toc": "toc.js",
+        "chap": "chap.js"
+    }
+}
