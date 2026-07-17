@@ -70,6 +70,17 @@
       "description": "Đọc truyện trên QQ阅读 HTML5",
       "type": "chinese_novel",
       "locale": "zh_CN"
+    },
+    {
+      "name": "Qê Qê (QQ阅读)",
+      "author": "Hung",
+      "path": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/Q%C3%AA%20Q%C3%AA/plugin.zip",
+      "version": 8,
+      "source": "https://bookshelf.html5.qq.com/qbread/categorylist?ch=001995&groupid=1501",
+      "icon": "https://raw.githubusercontent.com/hung2143/vbook-ext-/refs/heads/main/Q%C3%AA%20Q%C3%AA/icon.png",
+      "description": "QQ阅读 xịn v8: card gọn đẹp (★/👁/字/#tag), home nhóm rõ, genre gọn, detail sạch, search/toc/chap ổn định",
+      "type": "chinese_novel",
+      "locale": "zh_CN"
     }
   ]
 }

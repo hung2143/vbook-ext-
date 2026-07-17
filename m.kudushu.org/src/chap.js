@@ -45,24 +45,36 @@ function loadWithBrowser(browser, url) {
     return null;
 }
 
-function loadDoc(url, referer, browser) {
-    try {
-        var response = fetch(url, {
-            headers: {
-                "user-agent": UserAgent.android(),
-                "referer": referer || HOST + "/",
-                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "accept-language": "zh-CN,zh;q=0.9"
+function ensureBrowser(session) {
+    if (session.browser) return session.browser;
+    session.browser = Engine.newBrowser();
+    session.browser.setUserAgent(UserAgent.android());
+    return session.browser;
+}
+
+function loadDoc(url, referer, session) {
+    // Probe direct HTTP while it works. After Cloudflare blocks it, use one
+    // browser for all remaining sub-pages instead of repeating the same 403.
+    if (!session.browserOnly) {
+        try {
+            var response = fetch(url, {
+                headers: {
+                    "user-agent": UserAgent.android(),
+                    "referer": referer || HOST + "/",
+                    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "accept-language": "zh-CN,zh;q=0.9"
+                }
+            });
+            if (response && response.ok) {
+                var fetched = response.html();
+                if (!isBlocked(fetched)) return fetched;
             }
-        });
-        if (response && response.ok) {
-            var fetched = response.html();
-            if (!isBlocked(fetched)) return fetched;
-        }
-    } catch (ignore) {}
+        } catch (ignore) {}
+        session.browserOnly = true;
+    }
 
     try {
-        return loadWithBrowser(browser, url);
+        return loadWithBrowser(ensureBrowser(session), url);
     } catch (e) {
         Console.log("kudushu chapter: " + e);
         return null;
@@ -155,10 +167,8 @@ function execute(url) {
     var basePath = chapterBase(firstUrl);
     if (!basePath) return null;
 
-    var browser = Engine.newBrowser();
+    var session = { browser: null, browserOnly: false };
     try {
-        browser.setUserAgent(UserAgent.android());
-
         var currentUrl = firstUrl;
         var content = "";
         var seen = {};
@@ -172,7 +182,7 @@ function execute(url) {
             seen[currentUrl] = true;
             guard++;
 
-            var doc = loadDoc(currentUrl, firstUrl, browser);
+            var doc = loadDoc(currentUrl, firstUrl, session);
             if (!doc) {
                 wasBlocked = true;
                 if (loadedPages > 0) pageFailure = true;
@@ -200,7 +210,6 @@ function execute(url) {
 
             var nextUrl = findNextPage(doc, currentUrl, basePath);
             if (!nextUrl) break;
-            sleep(200);
             currentUrl = nextUrl;
         }
 
@@ -211,6 +220,8 @@ function execute(url) {
         if (wasBlocked) return Response.error("Kudushu đang yêu cầu xác minh Cloudflare. Hãy thử lại sau khi mở trang nguồn trong trình duyệt.");
         return Response.error("Không tìm thấy nội dung chương trên Kudushu.");
     } finally {
-        try { browser.close(); } catch (ignore) {}
+        if (session.browser) {
+            try { session.browser.close(); } catch (ignore) {}
+        }
     }
 }

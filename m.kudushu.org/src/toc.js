@@ -3,6 +3,7 @@ var DESKTOP_HOST = "https://www.kudushu.org";
 var BROWSER_TIMEOUT = 1500;
 var BROWSER_POLL_INTERVAL = 500;
 var BROWSER_POLL_LIMIT = 18;
+var MOBILE_PAGE_THRESHOLD = 6;
 
 function cleanText(value) {
     return (value || "").replace(/\s+/g, " ").trim();
@@ -67,24 +68,36 @@ function loadWithBrowser(browser, url) {
     return null;
 }
 
-function loadDoc(url, referer, browser) {
-    try {
-        var response = fetch(url, {
-            headers: {
-                "user-agent": UserAgent.android(),
-                "referer": referer || HOST + "/",
-                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "accept-language": "zh-CN,zh;q=0.9"
+function ensureBrowser(session) {
+    if (session.browser) return session.browser;
+    session.browser = Engine.newBrowser();
+    session.browser.setUserAgent(UserAgent.android());
+    return session.browser;
+}
+
+function loadDoc(url, referer, session) {
+    // Once a direct request is blocked, do not repeat it for every catalog
+    // page. Keep using the same browser so its Cloudflare clearance is reused.
+    if (!session.browserOnly) {
+        try {
+            var response = fetch(url, {
+                headers: {
+                    "user-agent": UserAgent.android(),
+                    "referer": referer || HOST + "/",
+                    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "accept-language": "zh-CN,zh;q=0.9"
+                }
+            });
+            if (response && response.ok) {
+                var fetched = response.html();
+                if (!isBlocked(fetched)) return fetched;
             }
-        });
-        if (response && response.ok) {
-            var fetched = response.html();
-            if (!isBlocked(fetched)) return fetched;
-        }
-    } catch (ignore) {}
+        } catch (ignore) {}
+        session.browserOnly = true;
+    }
 
     try {
-        return loadWithBrowser(browser, url);
+        return loadWithBrowser(ensureBrowser(session), url);
     } catch (e) {
         Console.log("kudushu toc: " + e);
         return null;
@@ -181,39 +194,73 @@ function collectPages(doc, bookId, baseUrl) {
     return pages;
 }
 
+function mobilePagesAfterFirst(pages, baseUrl) {
+    var result = [];
+    for (var i = 0; i < pages.length; i++) {
+        if (pages[i] === baseUrl || pageIndex(pages[i]) <= 1) continue;
+        result.push(pages[i]);
+    }
+    return result;
+}
+
+function loadMobilePages(pages, bookId, baseUrl, session, data, seen) {
+    for (var i = 0; i < pages.length; i++) {
+        var pageDoc = loadDoc(pages[i], baseUrl, session);
+        if (pageDoc) addChapters(pageDoc, bookId, pages[i], data, seen);
+    }
+}
+
 function execute(url) {
     var bookId = getBookId(url);
     var baseUrl = normalBookUrl(url);
     if (!bookId || !baseUrl) return null;
 
-    var browser = Engine.newBrowser();
+    var session = { browser: null, browserOnly: false };
     try {
-        browser.setUserAgent(UserAgent.android());
-
-        // The desktop catalog contains all chapters on one page. This avoids
-        // loading one mobile asc-* page for every group of 20 chapters.
-        var desktopUrl = desktopBookUrl(bookId);
-        var desktopDoc = loadDoc(desktopUrl, DESKTOP_HOST + "/", browser);
         var data = [];
         var seen = {};
-        if (desktopDoc) addDesktopChapters(desktopDoc, bookId, desktopUrl, data, seen);
-        if (data.length) return Response.success(sortChapters(data));
 
-        var doc = loadDoc(baseUrl, HOST + "/", browser);
-        if (!doc) return Response.error("Kudushu đang yêu cầu xác minh Cloudflare. Hãy thử lại sau khi mở trang nguồn trong trình duyệt.");
+        // Start on the mobile host used by detail.js. Short books can finish
+        // here without paying for a separate www-host Cloudflare challenge.
+        var mobileDoc = loadDoc(baseUrl, HOST + "/", session);
+        if (mobileDoc) {
+            addChapters(mobileDoc, bookId, baseUrl, data, seen);
+            var mobilePages = mobilePagesAfterFirst(collectPages(mobileDoc, bookId, baseUrl), baseUrl);
 
-        addChapters(doc, bookId, baseUrl, data, seen);
+            if (mobilePages.length + 1 <= MOBILE_PAGE_THRESHOLD) {
+                loadMobilePages(mobilePages, bookId, baseUrl, session, data, seen);
+                return Response.success(sortChapters(data));
+            }
 
-        var pages = collectPages(doc, bookId, baseUrl);
-        for (var i = 0; i < pages.length; i++) {
-            if (pages[i] === baseUrl || pageIndex(pages[i]) <= 1) continue;
-            sleep(200);
-            var pageDoc = loadDoc(pages[i], baseUrl, browser);
-            if (pageDoc) addChapters(pageDoc, bookId, pages[i], data, seen);
+            // Long books are faster through the one-page desktop catalog.
+            // Use a separate result so a partial desktop parse cannot be mixed
+            // with the first mobile page.
+            var desktopUrl = desktopBookUrl(bookId);
+            var desktopDoc = loadDoc(desktopUrl, DESKTOP_HOST + "/", session);
+            var desktopData = [];
+            var desktopSeen = {};
+            if (desktopDoc) addDesktopChapters(desktopDoc, bookId, desktopUrl, desktopData, desktopSeen);
+            if (desktopData.length) return Response.success(sortChapters(desktopData));
+
+            // Desktop may be unavailable independently of the mobile host.
+            // Fall back to all mobile catalog pages to preserve completeness.
+            loadMobilePages(mobilePages, bookId, baseUrl, session, data, seen);
+            return Response.success(sortChapters(data));
         }
 
-        return Response.success(sortChapters(data));
+        // If only the mobile hostname is blocked, the desktop catalog can
+        // still provide the complete table of contents.
+        var fallbackDesktopUrl = desktopBookUrl(bookId);
+        var fallbackDesktopDoc = loadDoc(fallbackDesktopUrl, DESKTOP_HOST + "/", session);
+        if (fallbackDesktopDoc) {
+            addDesktopChapters(fallbackDesktopDoc, bookId, fallbackDesktopUrl, data, seen);
+            if (data.length) return Response.success(sortChapters(data));
+        }
+
+        return Response.error("Kudushu đang yêu cầu xác minh Cloudflare. Hãy thử lại sau khi mở trang nguồn trong trình duyệt.");
     } finally {
-        try { browser.close(); } catch (ignore) {}
+        if (session.browser) {
+            try { session.browser.close(); } catch (ignore) {}
+        }
     }
 }
