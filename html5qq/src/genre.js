@@ -1,6 +1,6 @@
 function execute() {
     var quickGenres = buildQuickGenres();
-    return Response.success(quickGenres.concat([{
+    return Response.success(buildMaleGenreEntries(quickGenres.concat([{
             title: "男-都市",
             input: "groupid=1505&start={{page}}&count=20&sort=0&sub=",
             script: "gen.js"
@@ -3955,48 +3955,119 @@ function execute() {
             input: "groupid=1694&start={{page}}&count=20&sub=彩妆/美发/美甲",
             script: "gen.js"
         }
-    ]));
+    ])));
 }
 
 function buildQuickGenres() {
-    // Các lối vào nhanh cho thể loại chính. Danh sách chi tiết bên dưới vẫn giữ
-    // nguyên để người đọc chọn cả các nhánh nhỏ như "都市生活" hay "东方玄幻".
-    var categories = [
-        { title: "男频・玄幻", groupid: "1501" },
-        { title: "男频・奇幻", groupid: "1502" },
-        { title: "男频・武侠", groupid: "1503" },
-        { title: "男频・仙侠", groupid: "1504" },
-        { title: "男频・都市", groupid: "1505" },
-        { title: "男频・历史", groupid: "1506" },
-        { title: "男频・军事", groupid: "1507" },
-        { title: "男频・悬疑", groupid: "1508" },
-        { title: "男频・科幻", groupid: "1509" },
-        { title: "男频・游戏", groupid: "1510" },
-        { title: "男频・体育", groupid: "1511" },
-        { title: "男频・二次元", groupid: "1512" },
-        { title: "男频・短篇", groupid: "1515" },
-        { title: "女频・幻情", groupid: "1516" },
-        { title: "女频・仙侠", groupid: "1517" },
-        { title: "女频・悬疑", groupid: "1518" },
-        { title: "女频・科幻", groupid: "1519" },
-        { title: "女频・游戏", groupid: "1520" },
-        { title: "女频・青春", groupid: "1522" },
-        { title: "女频・古言", groupid: "1523" },
-        { title: "女频・现言", groupid: "1524" }
+    return [
+        { title: "[Nam]-huyền huyễn", input: "groupid=1501&sub=", script: "feed.js" },
+        { title: "[Nam]-kỳ huyễn", input: "groupid=1502&sub=", script: "feed.js" },
+        { title: "[Nam]-võ hiệp", input: "groupid=1503&sub=", script: "feed.js" },
+        { title: "[Nam]-tiên hiệp", input: "groupid=1504&sub=", script: "feed.js" },
+        { title: "[Nam]-đô thị", input: "groupid=1505&sub=", script: "feed.js" },
+        { title: "[Nam]-lịch sử", input: "groupid=1506&sub=", script: "feed.js" },
+        { title: "[Nam]-quân sự", input: "groupid=1507&sub=", script: "feed.js" },
+        { title: "[Nam]-huyền nghi", input: "groupid=1508&sub=", script: "feed.js" },
+        { title: "[Nam]-khoa huyễn", input: "groupid=1509&sub=", script: "feed.js" },
+        { title: "[Nam]-võng du", input: "groupid=1510&sub=", script: "feed.js" },
+        { title: "[Nam]-thể thao", input: "groupid=1511&sub=", script: "feed.js" },
+        { title: "[Nam]-nhị thứ nguyên", input: "groupid=1512&sub=", script: "feed.js" },
+        { title: "[Nam]-đoản thiên", input: "groupid=1515&sub=", script: "feed.js" }
     ];
-    var data = [];
+}
 
-    categories.forEach(function(category) {
-        data.push({
-            title: category.title + "・最新更新",
-            input: "mode=updated&groupid=" + category.groupid,
-            script: "feed.js"
-        });
-        data.push({
-            title: category.title + "・阅读最多",
-            input: "mode=reads&groupid=" + category.groupid,
-            script: "feed.js"
-        });
+function getGenreParam(value, name) {
+    var match = String(value || "").match(new RegExp("(?:^|[?&])" + name + "=([^&]*)"));
+    if (!match) return "";
+
+    try {
+        return decodeURIComponent(String(match[1] || "").replace(/\+/g, " "));
+    } catch (error) {
+        return match[1] || "";
+    }
+}
+
+function getGenreParams(input) {
+    return {
+        groupid: getGenreParam(input, "groupid"),
+        sub: getGenreParam(input, "sub"),
+        tag: getGenreParam(input, "tag"),
+        words: getGenreParam(input, "words"),
+        finish: getGenreParam(input, "finish")
+    };
+}
+
+function maleTitleLabel(item, params) {
+    var title = String(item.title || "");
+
+    if (title.indexOf("[Nam]-") === 0) {
+        return title.substring("[Nam]-".length);
+    }
+
+    if (title.indexOf("男频・") === 0) {
+        return title.substring("男频・".length).replace(/・(?:最新更新|阅读最多)$/, "");
+    }
+
+    if (title.indexOf("男-") === 0) {
+        title = title.substring("男-".length);
+        return params.groupid === "20272" && title === "杀伐果断" ? "三观正" : title;
+    }
+
+    if (["神话", "秦汉", "战争", "聊天群"].indexOf(title) !== -1) {
+        return title;
+    }
+
+    return "";
+}
+
+function genreKey(params) {
+    return [
+        params.groupid,
+        params.sub,
+        params.tag,
+        params.words,
+        params.finish
+    ].join("|");
+}
+
+function feedInput(mode, params) {
+    var parts = ["mode=" + mode, "groupid=" + params.groupid];
+    if (params.sub) parts.push("sub=" + params.sub);
+    if (params.tag) parts.push("tag=" + params.tag);
+    if (params.words) parts.push("words=" + params.words);
+    if (params.finish) parts.push("finish=" + params.finish);
+    return parts.join("&");
+}
+
+function addGenrePair(data, label, params) {
+    data.push({
+        title: "[Nam]-" + label + "-đổi mới",
+        input: feedInput("updated", params),
+        script: "feed.js"
+    });
+    data.push({
+        title: "[Nam]-" + label + "-lượt đọc",
+        input: feedInput("reads", params),
+        script: "feed.js"
+    });
+}
+
+function buildMaleGenreEntries(items) {
+    var data = [];
+    var seen = {};
+
+    items.forEach(function(item) {
+        var params = getGenreParams(item.input);
+        if (!params.groupid) return;
+
+        var label = maleTitleLabel(item, params);
+        if (!label) return;
+
+        var key = genreKey(params);
+        if (seen[key]) return;
+        seen[key] = true;
+
+        addGenrePair(data, label, params);
     });
 
     return data;

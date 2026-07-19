@@ -1,9 +1,8 @@
 var API_HOST = "https://bookshelf.html5.qq.com";
 var INTRO_API = API_HOST + "/qbread/api/novel/intro-info?bookid=";
 
-// `subject` trong API giới thiệu là thể loại cấp một, còn danh sách xếp hạng
-// cần `groupid`.  Một số thể loại trùng tên giữa nam tần và nữ tần nên lưu
-// riêng nhóm nữ để tag dẫn đến đúng danh sách.
+// `subject` trong API giới thiệu là thể loại cấp một, còn feed thể loại cần `groupid`.
+// Plugin chỉ xuất link thể loại Nam để khớp navbar và trang thể loại.
 var CATEGORY_GROUP_IDS = {
     "玄幻": "1501",
     "奇幻": "1502",
@@ -17,18 +16,23 @@ var CATEGORY_GROUP_IDS = {
     "游戏": "1510",
     "体育": "1511",
     "二次元": "1512",
-    "短篇": "1515",
-    "幻情": "1516",
-    "青春": "1522",
-    "古言": "1523",
-    "现言": "1524"
+    "短篇": "1515"
 };
 
-var FEMALE_CATEGORY_GROUP_IDS = {
-    "仙侠": "1517",
-    "悬疑": "1518",
-    "科幻": "1519",
-    "游戏": "1520"
+var CATEGORY_LABELS = {
+    "玄幻": "huyền huyễn",
+    "奇幻": "kỳ huyễn",
+    "武侠": "võ hiệp",
+    "仙侠": "tiên hiệp",
+    "都市": "đô thị",
+    "历史": "lịch sử",
+    "军事": "quân sự",
+    "悬疑": "huyền nghi",
+    "科幻": "khoa huyễn",
+    "游戏": "võng du",
+    "体育": "thể thao",
+    "二次元": "nhị thứ nguyên",
+    "短篇": "đoản thiên"
 };
 
 function getBookId(url) {
@@ -66,9 +70,7 @@ function cleanText(value) {
 }
 
 function groupIdForBook(book, subject) {
-    if (Number(book.sex) === 2 && FEMALE_CATEGORY_GROUP_IDS[subject]) {
-        return FEMALE_CATEGORY_GROUP_IDS[subject];
-    }
+    if (Number(book.sex) === 2) return "";
     return CATEGORY_GROUP_IDS[subject] || "";
 }
 
@@ -78,10 +80,17 @@ function buildGenres(book) {
     var groupId = groupIdForBook(book, subject);
     if (!subject || !groupId) return [];
 
+    var title = subtype || CATEGORY_LABELS[subject] || subject;
+    var input = "groupid=" + groupId + (subtype ? "&sub=" + subtype : "");
+
     return [{
-        title: subtype || subject,
-        input: "groupid=" + groupId + "&start={{page}}&count=20&sort=0&sub=" + subtype,
-        script: "gen.js"
+        title: "[Nam]-" + title + "-đổi mới",
+        input: "mode=updated&" + input,
+        script: "feed.js"
+    }, {
+        title: "[Nam]-" + title + "-lượt đọc",
+        input: "mode=reads&" + input,
+        script: "feed.js"
     }];
 }
 

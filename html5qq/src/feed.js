@@ -7,20 +7,27 @@ var NEWEST_SCAN_SIZE = 10000;
 var PAGE_SIZE = 20;
 var TOKEN_PAGE_COUNT = 10;
 
+var MALE_GROUPS = ["1501", "1502", "1503", "1504", "1505", "1506", "1507", "1508", "1509", "1510", "1511", "1512", "1515"];
+
 var MODE_GROUPS = {
-    recommend_male: ["1501", "1505", "1504", "1512"],
-    recommend_female: ["1523", "1524", "1516", "1517"],
-    reads: ["1501", "1505", "1504", "1523", "1524", "1516"],
-    score: ["1501", "1505", "1504", "1523", "1524", "1516"],
-    updated: ["1501", "1505", "1504", "1523", "1524", "1516"],
-    updated_all: ["1501", "1502", "1503", "1504", "1505", "1506", "1507", "1508", "1509", "1510", "1511", "1512", "1515", "1516", "1517", "1518", "1519", "1520", "1522", "1523", "1524"],
-    finished: ["1501", "1505", "1504", "1523", "1524", "1516"],
-    random_finished: ["1501", "1505", "1504", "1523", "1524", "1516"]
+    recommend_male: MALE_GROUPS,
+    reads: MALE_GROUPS,
+    score: MALE_GROUPS,
+    updated: MALE_GROUPS,
+    updated_all: MALE_GROUPS,
+    finished: MALE_GROUPS,
+    random_finished: MALE_GROUPS
 };
 
 function getParam(value, name) {
     var match = String(value || "").match(new RegExp("(?:^|[?&])" + name + "=([^&]+)"));
-    return match ? match[1] : "";
+    if (!match) return "";
+
+    try {
+        return decodeURIComponent(String(match[1] || "").replace(/\+/g, " "));
+    } catch (error) {
+        return match[1] || "";
+    }
 }
 
 function toNumber(value) {
@@ -31,6 +38,67 @@ function toNumber(value) {
 function validGroupIds(groups) {
     return groups.filter(function(groupId) {
         return /^\d+$/.test(String(groupId || ""));
+    });
+}
+
+function getFilters(input) {
+    return {
+        sub: getParam(input, "sub"),
+        tag: getParam(input, "tag"),
+        words: getParam(input, "words"),
+        finish: getParam(input, "finish")
+    };
+}
+
+function hasBookFilters(filters) {
+    return !!(filters && (filters.sub || filters.tag || filters.words || filters.finish));
+}
+
+function tagMatches(bookTags, wantedTag) {
+    if (!wantedTag) return true;
+
+    var tags = String(bookTags || "").split("|");
+    for (var index = 0; index < tags.length; index++) {
+        if (tags[index] === wantedTag) return true;
+    }
+    return false;
+}
+
+function finishMatches(book, finish) {
+    if (!finish) return true;
+
+    var value = String(finish).toLowerCase();
+    var wantFinished = value === "1" || value === "true" || value === "finish" || value === "finished";
+    return !!book.isfinish === wantFinished;
+}
+
+function textMatches(book, words) {
+    if (!words) return true;
+
+    var haystack = [
+        book.resourceName,
+        book.author,
+        book.subject,
+        book.subtype,
+        book.tag,
+        book.summary
+    ].join(" ");
+    return haystack.indexOf(words) !== -1;
+}
+
+function bookMatchesFilters(book, filters) {
+    if (!filters) return true;
+    if (filters.sub && book.subtype !== filters.sub) return false;
+    if (!tagMatches(book.tag, filters.tag)) return false;
+    if (!finishMatches(book, filters.finish)) return false;
+    if (!textMatches(book, filters.words)) return false;
+    return true;
+}
+
+function filterBooks(books, filters) {
+    if (!hasBookFilters(filters)) return books;
+    return books.filter(function(book) {
+        return bookMatchesFilters(book, filters);
     });
 }
 
@@ -204,7 +272,7 @@ function decodeNewestToken(value) {
     };
 }
 
-function fetchNewestPage(groups, pageValue) {
+function fetchNewestPage(groups, pageValue, filters) {
     var token = decodeNewestToken(pageValue);
     var pageNumber = token ? token.pageNumber : parseInt(pageValue || "1", 10);
     if (isNaN(pageNumber) || pageNumber < 1) pageNumber = 1;
@@ -252,6 +320,8 @@ function fetchNewestPage(groups, pageValue) {
         orderedBooks.push(book);
     });
 
+    orderedBooks = filterBooks(orderedBooks, filters);
+    if (!orderedBooks.length && selected.length && hasBookFilters(filters)) return null;
     if (!orderedBooks.length && selected.length) return null;
 
     var next = null;
@@ -269,8 +339,19 @@ function fetchNewestPage(groups, pageValue) {
     };
 }
 
-function fetchGroup(groupId, page) {
-    var url = RANK_API + "?ch=001995&groupid=" + groupId + "&start=" + page + "&count=20&sort=0&sub=&tag=&words=&finish=";
+function queryValue(value) {
+    return encodeURIComponent(String(value || ""));
+}
+
+function fetchGroup(groupId, page, filters) {
+    filters = filters || {};
+    var url = RANK_API + "?ch=001995&groupid=" + queryValue(groupId) +
+        "&start=" + queryValue(page) +
+        "&count=20&sort=0" +
+        "&sub=" + queryValue(filters.sub) +
+        "&tag=" + queryValue(filters.tag) +
+        "&words=" + queryValue(filters.words) +
+        "&finish=" + queryValue(filters.finish);
     var response = fetch(url, {
         headers: {
             "user-agent": UserAgent.android(),
@@ -372,37 +453,21 @@ function shuffleBooks(books) {
     }
 }
 
-function execute(input, page) {
-    var mode = getParam(input, "mode") || "reads";
-    var groupId = getParam(input, "groupid");
-    var groups = groupId ? [groupId] : (MODE_GROUPS[mode] || MODE_GROUPS.reads);
-    var pageNumber = parseInt(page || "1", 10);
-    if (isNaN(pageNumber) || pageNumber < 1) pageNumber = 1;
-
-    if (mode === "updated" || mode === "updated_all") {
-        var newestPage = fetchNewestPage(groups, page || "1");
-        if (newestPage !== null) {
-            return Response.success(newestPage.data, newestPage.next);
-        }
-
-        // Không gắn nhãn danh sách phổ biến của API cũ thành "mới cập nhật".
-        // Người dùng có thể tải lại để endpoint cập nhật của QQ được thử lại.
-        return Response.success([]);
-    }
-
-    var batch = getGroupBatch(groups, pageNumber, !!groupId);
+function fetchRankPage(mode, groups, pageNumber, hasExplicitGroup, filters) {
+    var batch = getGroupBatch(groups, pageNumber, hasExplicitGroup);
     var books = [];
     var seen = {};
     var hasRows = false;
 
     batch.groups.forEach(function(currentGroupId) {
-        var groupBooks = fetchGroup(currentGroupId, batch.sourcePage);
+        var groupBooks = fetchGroup(currentGroupId, batch.sourcePage, filters);
         if (groupBooks.length) hasRows = true;
 
         groupBooks.forEach(function(book) {
             var bookId = book.resourceID || book.resourceId || book.bookid || book.bookId;
             if (!bookId || !book.resourceName || seen[bookId]) return;
             if ((mode === "finished" || mode === "random_finished") && !book.isfinish) return;
+            if (!bookMatchesFilters(book, filters)) return;
 
             seen[bookId] = true;
             books.push(book);
@@ -419,6 +484,30 @@ function execute(input, page) {
         });
     }
 
-    var data = booksToData(books.slice(0, PAGE_SIZE));
-    return Response.success(data, hasRows && data.length ? String(pageNumber + 1) : null);
+    return {
+        data: booksToData(books.slice(0, PAGE_SIZE)),
+        hasRows: hasRows
+    };
+}
+
+function execute(input, page) {
+    var mode = getParam(input, "mode") || "reads";
+    var groupId = getParam(input, "groupid");
+    var filters = getFilters(input);
+    var groups = groupId ? [groupId] : (MODE_GROUPS[mode] || MODE_GROUPS.reads);
+    var pageNumber = parseInt(page || "1", 10);
+    if (isNaN(pageNumber) || pageNumber < 1) pageNumber = 1;
+
+    if (mode === "updated" || mode === "updated_all") {
+        var newestPage = fetchNewestPage(groups, page || "1", filters);
+        if (newestPage !== null) {
+            return Response.success(newestPage.data, newestPage.next);
+        }
+
+        var updatedFallback = fetchRankPage(mode, groups, pageNumber, !!groupId, filters);
+        return Response.success(updatedFallback.data, updatedFallback.hasRows && updatedFallback.data.length ? String(pageNumber + 1) : null);
+    }
+
+    var rankPage = fetchRankPage(mode, groups, pageNumber, !!groupId, filters);
+    return Response.success(rankPage.data, rankPage.hasRows && rankPage.data.length ? String(pageNumber + 1) : null);
 }
