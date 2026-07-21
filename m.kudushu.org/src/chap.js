@@ -95,6 +95,59 @@ function cleanContent(html) {
         .trim();
 }
 
+function visibleText(html) {
+    return cleanText(String(html || "")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/&nbsp;|&#160;|&#x0*a0;/gi, " ")
+        .replace(/&mdash;|&ndash;|&#821[12];|&#x201[34];/gi, "—"));
+}
+
+function isContinuationNoise(html) {
+    var text = visibleText(html);
+    if (!text) return false;
+
+    // Every Kudushu sub-page repeats "chapter title (第2/3页)". Matching the
+    // page counter makes this independent of the novel and chapter title.
+    if (/[（(]\s*第\s*\d+\s*\/\s*\d+\s*[页頁]\s*[）)]\s*$/.test(text)) return true;
+
+    // Depending on the template, the separator is rendered as 上—章 or
+    // 上----章 before the repeated title.
+    return /^(?:上一章|[上中下]\s*[-‐‑‒–—―－_]{1,8}\s*章)$/.test(text);
+}
+
+function leadingContainerTags(html) {
+    var match = String(html || "").match(/^\s*(?:(?:<(?:div|p|section|article|main|blockquote)\b[^>]*>)\s*)+/i);
+    return match ? match[0] : "";
+}
+
+function stripContinuationNoise(html) {
+    // Handle templates that wrap the repeated heading in a block element.
+    html = html.replace(/<(p|h[1-6])\b[^>]*>[\s\S]*?<\/\1>/gi, function(block) {
+        return isContinuationNoise(block) ? "" : block;
+    });
+    // Match leaf divs separately so an outer content wrapper does not hide a
+    // repeated heading nested in its own div.
+    html = html.replace(/<div\b[^>]*>(?:(?!<div\b)[\s\S])*?<\/div>/gi, function(block) {
+        return isContinuationNoise(block) ? "" : block;
+    });
+
+    // Older templates separate lines only with <br>. Inspect only the leading
+    // lines, where Kudushu inserts pagination controls and the repeated title.
+    var pieces = html.split(/(<br\b[^>]*>)/i);
+    var inspectingHeader = true;
+    for (var i = 0; i < pieces.length && inspectingHeader; i += 2) {
+        if (isContinuationNoise(pieces[i])) {
+            // Keep an outer content wrapper whose closing tag occurs after the
+            // first <br>; only discard the text inside the repeated line.
+            pieces[i] = leadingContainerTags(pieces[i]);
+            if (i + 1 < pieces.length) pieces[i + 1] = "";
+        } else if (visibleText(pieces[i])) {
+            inspectingHeader = false;
+        }
+    }
+    return pieces.join("").replace(/^(?:\s|&nbsp;|&#160;|<br\b[^>]*>)+/i, "");
+}
+
 function chapterBase(url) {
     var match = String(url || "").match(/(\/html\/\d+\/\d+)(?:_\d+)?\/?(?:[?#].*)?$/i);
     return match ? match[1] : "";
@@ -197,7 +250,9 @@ function execute(url) {
             }
 
             var contentElement = doc.select("#novelcontent, .novelcontent, #chaptercontent, .chapter-content").first();
-            var html = contentElement ? cleanContent(contentElement.html()) : "";
+            var rawHtml = contentElement ? contentElement.html() : "";
+            if (loadedPages > 0) rawHtml = stripContinuationNoise(rawHtml);
+            var html = cleanContent(rawHtml);
             if (!html) {
                 if (loadedPages > 0) pageFailure = true;
                 break;
